@@ -1,0 +1,137 @@
+{
+  "entities": {
+    "User": {
+      "title": "User",
+      "description": "User profile with their app preferences.",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string" },
+        "createdAt": { "type": "number", "description": "Timestamp" }
+      },
+      "required": ["userId", "createdAt"]
+    },
+    "DailyHealthMetric": {
+      "title": "DailyHealthMetric",
+      "description": "Daily checkin and checkout metrics to track burnout and health.",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string" },
+        "date": { "type": "string", "description": "YYYY-MM-DD" },
+        "checkinMood": { "type": "number" },
+        "checkinAnxiety": { "type": "number" },
+        "checkinEnergy": { "type": "number" },
+        "checkinSleep": { "type": "number" },
+        "checkoutMood": { "type": "number" },
+        "checkoutAnxiety": { "type": "number" },
+        "checkoutEnergy": { "type": "number" },
+        "checkoutCause": { "type": "string" },
+        "createdAt": { "type": "number" },
+        "updatedAt": { "type": "number" }
+      },
+      "required": ["userId", "date", "createdAt"]
+    },
+    "Task": {
+      "title": "Task",
+      "description": "An MIT (Most Important Task) or a Habit.",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string" },
+        "type": { "type": "string", "enum": ["mit", "habit"] },
+        "text": { "type": "string" },
+        "done": { "type": "boolean" },
+        "date": { "type": "string", "description": "YYYY-MM-DD for MITs, empty for global Habits" },
+        "createdAt": { "type": "number" },
+        "updatedAt": { "type": "number" }
+      },
+      "required": ["userId", "type", "text", "done", "createdAt"]
+    },
+    "ActivityLog": {
+      "title": "ActivityLog",
+      "description": "Record of activity for self-monitoring (4 columns).",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string" },
+        "done": { "type": "string" },
+        "plannedNotDone": { "type": "string" },
+        "wouldLikeToDo": { "type": "string" },
+        "failureCause": { "type": "string" },
+        "date": { "type": "string", "description": "YYYY-MM-DD" },
+        "createdAt": { "type": "number" }
+      },
+      "required": ["userId", "date", "createdAt"]
+    },
+    "Reframing": {
+      "title": "Reframing",
+      "description": "Cognitive reframing logs (TCC).",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string" },
+        "situation": { "type": "string" },
+        "automaticThought": { "type": "string" },
+        "emotion": { "type": "string" },
+        "emotionIntensity": { "type": "number" },
+        "evidenceFor": { "type": "string" },
+        "evidenceAgainst": { "type": "string" },
+        "rationalResponse": { "type": "string" },
+        "createdAt": { "type": "number" }
+      },
+      "required": ["userId", "situation", "automaticThought", "emotion", "emotionIntensity", "evidenceFor", "evidenceAgainst", "rationalResponse", "createdAt"]
+    },
+    "Gratitude": {
+      "title": "Gratitude",
+      "description": "Daily gratitude logs.",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string" },
+        "items": { "type": "array", "items": { "type": "string" } },
+        "createdAt": { "type": "number" }
+      },
+      "required": ["userId", "items", "createdAt"]
+    },
+    "Lead": {
+      "title": "Lead",
+      "description": "Real estate leads for CRM.",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string" },
+        "name": { "type": "string" },
+        "property": { "type": "string" },
+        "notes": { "type": "string" },
+        "nextActionDate": { "type": "number" },
+        "stage": { "type": "string" },
+        "createdAt": { "type": "number" }
+      },
+      "required": ["userId", "name", "stage", "createdAt"]
+    }
+  },
+  "firestore": {
+    "users/{userId}": {
+      "schema": { "$ref": "#/entities/User" },
+      "description": "Stores user profiles."
+    },
+    "users/{userId}/metrics/{metricId}": {
+      "schema": { "$ref": "#/entities/DailyHealthMetric" },
+      "description": "Stores daily checkin/checkout metrics."
+    },
+    "users/{userId}/tasks/{taskId}": {
+      "schema": { "$ref": "#/entities/Task" },
+      "description": "Stores MITs and Habits."
+    },
+    "users/{userId}/activityLogs/{logId}": {
+      "schema": { "$ref": "#/entities/ActivityLog" },
+      "description": "Stores activity logs for self-monitoring."
+    },
+    "users/{userId}/reframings/{reframingId}": {
+      "schema": { "$ref": "#/entities/Reframing" },
+      "description": "Stores cognitive reframings."
+    },
+    "users/{userId}/gratitudes/{gratitudeId}": {
+      "schema": { "$ref": "#/entities/Gratitude" },
+      "description": "Stores gratitudes."
+    },
+    "users/{userId}/leads/{leadId}": {
+      "schema": { "$ref": "#/entities/Lead" },
+      "description": "Stores real estate leads."
+    }
+  }
+}

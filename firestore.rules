@@ -1,0 +1,193 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // 0. Global Safety Net
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // Phase 3: Primitives
+    function isSignedIn() { return request.auth != null; }
+    function isOwner(userId) { return isSignedIn() && request.auth.uid == userId; }
+    function incoming() { return request.resource.data; }
+    function existing() { return resource.data; }
+
+    function isValidId(id) { 
+      return id is string && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$'); 
+    }
+
+    // Entities Validations
+    function isValidUser(data) {
+      return data.keys().hasAll(['userId', 'createdAt'])
+        && data.keys().size() <= 2
+        && data.userId == request.auth.uid
+        && data.createdAt is number;
+    }
+
+    function isValidDailyHealthMetric_Create(data) {
+      return data.keys().hasAll(['userId', 'date', 'createdAt'])
+        && data.userId == request.auth.uid
+        && data.date is string && data.date.size() <= 20
+        && data.createdAt is number
+        && (data.get('checkinMood', 0) is number)
+        && (data.get('checkinAnxiety', 0) is number)
+        && (data.get('checkinEnergy', 0) is number)
+        && (data.get('checkinSleep', 0) is number)
+        && (data.get('checkoutMood', 0) is number)
+        && (data.get('checkoutAnxiety', 0) is number)
+        && (data.get('checkoutEnergy', 0) is number)
+        && (data.get('checkoutCause', '') is string && data.get('checkoutCause', '').size() <= 1000)
+        && (data.get('updatedAt', 0) is number);
+    }
+    
+    function isValidDailyHealthMetric_Update(data) {
+      return data.userId == existing().userId
+        && data.date == existing().date
+        && data.createdAt == existing().createdAt
+        && (data.get('checkinMood', 0) is number)
+        && (data.get('checkinAnxiety', 0) is number)
+        && (data.get('checkinEnergy', 0) is number)
+        && (data.get('checkinSleep', 0) is number)
+        && (data.get('checkoutMood', 0) is number)
+        && (data.get('checkoutAnxiety', 0) is number)
+        && (data.get('checkoutEnergy', 0) is number)
+        && (data.get('checkoutCause', '') is string && data.get('checkoutCause', '').size() <= 1000)
+        && data.updatedAt is number;
+    }
+
+    function isValidTask_Create(data) {
+      return data.keys().hasAll(['userId', 'type', 'text', 'done', 'createdAt'])
+        && data.userId == request.auth.uid
+        && data.type is string && data.type.size() <= 20 && data.type in ['mit', 'habit']
+        && data.text is string && data.text.size() <= 1000
+        && data.done is bool
+        && data.createdAt is number
+        && (data.get('date', '') is string && data.get('date', '').size() <= 20)
+        && (data.get('time', '') is string && data.get('time', '').size() <= 100)
+        && (data.get('location', '') is string && data.get('location', '').size() <= 100)
+        && (data.get('identityVote', '') is string && data.get('identityVote', '').size() <= 100)
+        && (data.get('isTwoMinute', false) is bool)
+        && (data.get('updatedAt', 0) is number);
+    }
+
+    function isValidTask_Update(data) {
+      return data.userId == existing().userId
+        && data.type == existing().type
+        && data.text is string && data.text.size() <= 1000
+        && data.createdAt == existing().createdAt
+        && data.done is bool
+        && (data.get('date', '') is string && data.get('date', '').size() <= 20)
+        && (data.get('time', '') is string && data.get('time', '').size() <= 100)
+        && (data.get('location', '') is string && data.get('location', '').size() <= 100)
+        && (data.get('identityVote', '') is string && data.get('identityVote', '').size() <= 100)
+        && (data.get('isTwoMinute', false) is bool)
+        && data.updatedAt is number;
+    }
+
+    function isValidActivityLog_Create(data) {
+      return data.keys().hasAll(['userId', 'date', 'createdAt'])
+        && data.userId == request.auth.uid
+        && data.date is string && data.date.size() <= 20
+        && data.createdAt is number
+        && (data.get('done', '') is string && data.get('done', '').size() <= 1000)
+        && (data.get('plannedNotDone', '') is string && data.get('plannedNotDone', '').size() <= 1000)
+        && (data.get('wouldLikeToDo', '') is string && data.get('wouldLikeToDo', '').size() <= 1000)
+        && (data.get('failureCause', '') is string && data.get('failureCause', '').size() <= 1000);
+    }
+
+    function isValidReframing_Create(data) {
+      return data.keys().hasAll(['userId', 'situation', 'automaticThought', 'emotion', 'emotionIntensity', 'evidenceFor', 'evidenceAgainst', 'rationalResponse', 'createdAt'])
+        && data.userId == request.auth.uid
+        && data.situation is string && data.situation.size() <= 2000
+        && data.automaticThought is string && data.automaticThought.size() <= 2000
+        && data.emotion is string && data.emotion.size() <= 200
+        && data.emotionIntensity is number
+        && data.evidenceFor is string && data.evidenceFor.size() <= 2000
+        && data.evidenceAgainst is string && data.evidenceAgainst.size() <= 2000
+        && data.rationalResponse is string && data.rationalResponse.size() <= 2000
+        && data.createdAt is number;
+    }
+
+    function isValidGratitude_Create(data) {
+      return data.keys().hasAll(['userId', 'items', 'createdAt'])
+        && data.userId == request.auth.uid
+        && data.items is list
+        && data.items.size() <= 10
+        && (data.items.size() == 0 || data.items[0] is string)
+        && data.createdAt is number;
+    }
+
+    function isValidLead_Create(data) {
+      return data.keys().hasAll(['userId', 'name', 'stage', 'createdAt'])
+        && data.userId == request.auth.uid
+        && data.name is string && data.name.size() <= 100
+        && data.stage is string && data.stage.size() <= 20
+        && data.createdAt is number
+        && (data.get('property', '') is string && data.get('property', '').size() <= 100)
+        && (data.get('notes', '') is string && data.get('notes', '').size() <= 2000)
+        && (data.get('nextActionDate', 0) is number);
+    }
+    
+    function isValidLead_Update(incoming, existing) {
+       return incoming.diff(existing).affectedKeys().hasOnly(['stage', 'property', 'notes', 'nextActionDate', 'name'])
+         && (incoming.get('stage', '') is string && incoming.get('stage', '').size() <= 20)
+         && (incoming.get('property', '') is string && incoming.get('property', '').size() <= 100)
+         && (incoming.get('notes', '') is string && incoming.get('notes', '').size() <= 2000)
+         && (incoming.get('nextActionDate', 0) is number);
+    }
+
+    // Match Collections
+    match /users/{userId} {
+      allow get: if isOwner(userId) && isValidId(userId);
+      allow create: if isOwner(userId) && isValidId(userId) && isValidUser(incoming());
+      // Users are not updated or deleted currently, only updated
+      allow update: if isOwner(userId) && isValidId(userId) && isValidUser(incoming())
+        && incoming().diff(existing()).affectedKeys().hasOnly(['createdAt']);
+
+      match /metrics/{metricId} {
+        allow get: if isOwner(userId) && isValidId(userId) && isValidId(metricId);
+        allow list: if isOwner(userId) && isValidId(userId);
+        allow create: if isOwner(userId) && isValidId(userId) && isValidId(metricId) && isValidDailyHealthMetric_Create(incoming());
+        allow update: if isOwner(userId) && isValidId(userId) && isValidId(metricId) && isValidDailyHealthMetric_Update(incoming())
+            && incoming().diff(existing()).affectedKeys().hasOnly(['checkinMood', 'checkinAnxiety', 'checkinEnergy', 'checkinSleep', 'checkoutMood', 'checkoutAnxiety', 'checkoutEnergy', 'checkoutCause', 'updatedAt']);
+      }
+
+      match /tasks/{taskId} {
+        allow get: if isOwner(userId) && isValidId(userId) && isValidId(taskId);
+        allow list: if isOwner(userId) && isValidId(userId);
+        allow create: if isOwner(userId) && isValidId(userId) && isValidId(taskId) && isValidTask_Create(incoming());
+        allow update: if isOwner(userId) && isValidId(userId) && isValidId(taskId) && isValidTask_Update(incoming())
+             && incoming().diff(existing()).affectedKeys().hasOnly(['text', 'done', 'date', 'updatedAt']);
+        allow delete: if isOwner(userId) && isValidId(userId) && isValidId(taskId);
+      }
+
+      match /activityLogs/{logId} {
+        allow get: if isOwner(userId) && isValidId(userId) && isValidId(logId);
+        allow list: if isOwner(userId) && isValidId(userId);
+        allow create: if isOwner(userId) && isValidId(userId) && isValidId(logId) && isValidActivityLog_Create(incoming());
+        allow delete: if isOwner(userId) && isValidId(userId) && isValidId(logId);
+      }
+
+      match /reframings/{reframingId} {
+        allow get: if isOwner(userId) && isValidId(userId) && isValidId(reframingId);
+        allow list: if isOwner(userId) && isValidId(userId);
+        allow create: if isOwner(userId) && isValidId(userId) && isValidId(reframingId) && isValidReframing_Create(incoming());
+      }
+
+      match /gratitudes/{gratitudeId} {
+        allow get: if isOwner(userId) && isValidId(userId) && isValidId(gratitudeId);
+        allow list: if isOwner(userId) && isValidId(userId);
+        allow create: if isOwner(userId) && isValidId(userId) && isValidId(gratitudeId) && isValidGratitude_Create(incoming());
+      }
+      
+      match /leads/{leadId} {
+        allow get: if isOwner(userId) && isValidId(userId) && isValidId(leadId);
+        allow list: if isOwner(userId) && isValidId(userId);
+        allow create: if isOwner(userId) && isValidId(userId) && isValidId(leadId) && isValidLead_Create(incoming());
+        allow update: if isOwner(userId) && isValidId(userId) && isValidId(leadId) && isValidLead_Update(incoming(), existing());
+        allow delete: if isOwner(userId) && isValidId(userId) && isValidId(leadId);
+      }
+    }
+  }
+}
