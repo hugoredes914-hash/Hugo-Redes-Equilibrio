@@ -22,5 +22,6 @@ jobs:
       - run: npm run lint
       - run: npm test
       - run: npm run build
+      - run: npm run test:production
       - run: npm run test:rules
       - run: npm audit --omit=dev --audit-level=moderate

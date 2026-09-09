@@ -11,7 +11,8 @@
     "clean": "rm -rf dist",
     "lint": "tsc --noEmit",
     "test": "node --import tsx --test tests/*.test.ts",
-    "test:rules": "firebase emulators:exec --project demo-equilibrio --only firestore \"node --import tsx --test tests/rules.integration.ts\""
+    "test:rules": "firebase emulators:exec --project demo-equilibrio --only firestore \"node --import tsx --test tests/rules.integration.ts\"",
+    "test:production": "node --import tsx tests/production.integration.ts"
   },
   "dependencies": {
     "@base-ui/react": "^1.4.1",
