@@ -6,3 +6,9 @@ coverage/
 *.log
 .env*
 !.env.example
+
+backups/
+*.backup.json
+*.backup.json.sha256
+.firebase/
+*-debug.log

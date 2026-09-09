@@ -1,3 +1,22 @@
+import {auth} from './firebase';
+import {onAuthStateChanged} from 'firebase/auth';
+let consentUid: string | null = null;
+onAuthStateChanged(auth,()=>{consentUid=null;});
+class SessionChangedError extends Error {}
+async function postAI(url:string, init:RequestInit) {
+  const user=auth.currentUser;
+  if(!user)throw new SessionChangedError('Sesión requerida');
+  if(consentUid!==user.uid) {
+    if(!window.confirm('Esta función puede enviar el texto ingresado y los datos necesarios del análisis a Google Gemini. Evita información confidencial que no quieras compartir. ¿Permitir durante esta sesión?')) throw new Error('Usar alternativa local');
+    consentUid=user.uid;
+  }
+  const token=await user.getIdToken();
+  if(auth.currentUser?.uid!==user.uid)throw new SessionChangedError('La sesión cambió');
+  const res=await fetch(url,{...init,headers:{...init.headers,Authorization:`Bearer ${token}`},signal:AbortSignal.timeout(30000)});
+  if(auth.currentUser?.uid!==user.uid)throw new SessionChangedError('La sesión cambió');
+  if(res.status===401||res.status===403)throw new SessionChangedError('La sesión no es válida. Vuelve a ingresar.');
+  return res;
+}
 // Client-side helper that communicates with server-side Gemini API endpoints
 
 export interface ParsedLeadData {
@@ -7,6 +26,7 @@ export interface ParsedLeadData {
   propertyValue: string;
   interest: "Alto" | "Medio" | "Bajo";
   notes: string;
+  source?: "local" | "gemini";
 }
 
 // Fallback client-side heuristic parser
@@ -81,12 +101,12 @@ export function clientFallbackParseLead(text: string): ParsedLeadData {
     interest = "Bajo";
   }
 
-  return { name, phone, property, propertyValue, interest, notes };
+  return { name, phone, property, propertyValue, interest, notes, source:"local" };
 }
 
 export async function parseLeadWithAI(text: string): Promise<ParsedLeadData> {
   try {
-    const res = await fetch("/api/gemini/parse-lead", {
+    const res = await postAI("/api/gemini/parse-lead", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ text }),
@@ -101,11 +121,13 @@ export async function parseLeadWithAI(text: string): Promise<ParsedLeadData> {
           propertyValue: String(data.lead.propertyValue || ""),
           interest: ["Alto", "Medio", "Bajo"].includes(data.lead.interest) ? data.lead.interest : "Medio",
           notes: data.lead.notes || "",
+          source: data.fallback?"local":"gemini",
         };
       }
     }
   } catch (_err) {
-    // Graceful offline fallback
+    if (_err instanceof SessionChangedError) throw _err;
+    // Offline alternative, explicitly identified below
   }
 
   return clientFallbackParseLead(text);
@@ -113,7 +135,7 @@ export async function parseLeadWithAI(text: string): Promise<ParsedLeadData> {
 
 export async function draftMessageWithAI(lead: any): Promise<string> {
   try {
-    const res = await fetch("/api/gemini/draft-message", {
+    const res = await postAI("/api/gemini/draft-message", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -126,59 +148,65 @@ export async function draftMessageWithAI(lead: any): Promise<string> {
     if (res.ok) {
       const data = await res.json();
       if (data && data.message) {
-        return data.message;
+        return (data.fallback ? "[Plantilla local]\n" : "") + data.message;
       }
     }
   } catch (_err) {
-    // Graceful offline fallback
+    if (_err instanceof SessionChangedError) throw _err;
+    // Offline alternative, explicitly identified below
   }
 
   const name = lead.name || "Cliente";
-  return `¡Hola ${name}! Te escribo con relación a la propiedad ${lead.property || "que estuvimos conversando"}. ¿Cómo vienes con tus tiempos hoy para coordinar los detalles del siguiente paso?`;
+  return `[Plantilla local]\n¡Hola ${name}! Te escribo con relación a la propiedad ${lead.property || "que estuvimos conversando"}. ¿Cómo vienes con tus tiempos hoy para coordinar los detalles del siguiente paso?`;
 }
 
 export async function generateReportWithAI(leads: any[], metricsHistory: any[]): Promise<string> {
   try {
-    const res = await fetch("/api/gemini/report", {
+    const res = await postAI("/api/gemini/report", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ leads, metricsHistory }),
+      body: JSON.stringify({
+        leads:leads.filter(l=>!l.deletedAt).map(l=>({stage:l.stage||'',propertyValue:Number(l.propertyValue)||0,interest:['Alto','Medio','Bajo'].includes(l.interest)?l.interest:'Medio'})),
+        metricsHistory:metricsHistory.map(m=>({date:m.date,checkinAnxiety:m.checkinAnxiety,checkinEnergy:m.checkinEnergy,checkinMood:m.checkinMood})),
+      }),
     });
     if (res.ok) {
       const data = await res.json();
       if (data && data.report) {
-        return data.report;
+        return (data.fallback ? "[Análisis local, sin IA externa]\n" : "") + data.report;
       }
     }
   } catch (_err) {
-    // Graceful offline fallback
+    if (_err instanceof SessionChangedError) throw _err;
+    // Offline alternative, explicitly identified below
   }
 
-  return `📊 REPORTE PREDICTIVO COMERCIAL Y EMOCIONAL\n\n📈 Resumen Pipeline\nTienes ${leads.length} leads activos registrados. Revisa aquellos en etapas avanzadas para acelerar el cierre con seguimiento directo.\n\n🧠 Balance Emocional\nPrioriza llamadas clave en tus momentos de mayor enfoque y programa pausas para sostener un alto rendimiento sin sobrecarga.`;
+  return `[Análisis local, sin IA externa]\n📊 REPORTE PREDICTIVO COMERCIAL Y EMOCIONAL\n\n📈 Resumen Pipeline\nTienes ${leads.length} leads activos registrados. Revisa aquellos en etapas avanzadas para acelerar el cierre con seguimiento directo.\n\n🧠 Balance Emocional\nPrioriza llamadas clave en tus momentos de mayor enfoque y programa pausas para sostener un alto rendimiento sin sobrecarga.`;
 }
 
 export async function generateAnchorAndAdvice(status: any, mits: any[]) {
   try {
-    const res = await fetch("/api/gemini/anchor-advice", {
+    const res = await postAI("/api/gemini/anchor-advice", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ status, mits }),
+      body: JSON.stringify({ status, mits: mits.map(m=>({text:m.text,done:!!m.done})) }),
     });
     if (res.ok) {
       const json = await res.json();
       if (json && json.data) {
-        return json.data;
+        return {...json.data, source:json.fallback?"Orientación local":"Inteligencia Artificial"};
       }
     }
   } catch (_err) {
-    // Graceful offline fallback
+    if (_err instanceof SessionChangedError) throw _err;
+    // Offline alternative, explicitly identified below
   }
 
   const anxiety = status?.anxiety ?? 5;
   const energy = status?.energy ?? 5;
   let targetMit = "";
   if (Array.isArray(mits) && mits.length > 0) {
-    const active = mits.find((m: any) => !m.completed) || mits[0];
+    const active = mits.find((m: any) => !m.done) || mits[0];
     if (active) targetMit = typeof active === "string" ? active : active.text || "";
   }
 
@@ -204,12 +232,13 @@ export async function generateAnchorAndAdvice(status: any, mits: any[]) {
     anchor,
     theme,
     recommendation,
+    source:"Orientación local",
   };
 }
 
 export async function generateSosHelp(block: string): Promise<any[]> {
   try {
-    const res = await fetch("/api/gemini/sos-advice", {
+    const res = await postAI("/api/gemini/sos-advice", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ block }),
@@ -217,11 +246,12 @@ export async function generateSosHelp(block: string): Promise<any[]> {
     if (res.ok) {
       const json = await res.json();
       if (json && json.perspectives && Array.isArray(json.perspectives)) {
-        return json.perspectives;
+        return json.perspectives.map((p:any)=>({...p,role:json.fallback?`${p.role} · local`:p.role}));
       }
     }
   } catch (_err) {
-    // Graceful offline fallback
+    if (_err instanceof SessionChangedError) throw _err;
+    // Offline alternative, explicitly identified below
   }
 
   return [

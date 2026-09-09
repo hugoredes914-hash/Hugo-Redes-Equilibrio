@@ -26,17 +26,19 @@ service cloud.firestore {
     }
 
     function isValidDailyHealthMetric_Create(data) {
-      return data.keys().hasAll(['userId', 'date', 'createdAt'])
+      return data.keys().hasOnly(['userId', 'date', 'createdAt', 'updatedAt', 'checkinMood', 'checkinAnxiety', 'checkinEnergy', 'checkinSleep', 'checkoutMood', 'checkoutAnxiety', 'checkoutEnergy', 'checkoutCause', 'dayEnded'])
+        && data.keys().hasAll(['userId', 'date', 'createdAt'])
         && data.userId == request.auth.uid
         && data.date is string && data.date.size() <= 20
         && data.createdAt is number
-        && (data.get('checkinMood', 0) is number)
-        && (data.get('checkinAnxiety', 0) is number)
-        && (data.get('checkinEnergy', 0) is number)
-        && (data.get('checkinSleep', 0) is number)
-        && (data.get('checkoutMood', 0) is number)
-        && (data.get('checkoutAnxiety', 0) is number)
-        && (data.get('checkoutEnergy', 0) is number)
+        && (data.get('checkinMood', 0) is number && data.get('checkinMood', 0) >= 0 && data.get('checkinMood', 0) <= 10)
+        && (data.get('checkinAnxiety', 0) is number && data.get('checkinAnxiety', 0) >= 0 && data.get('checkinAnxiety', 0) <= 10)
+        && (data.get('checkinEnergy', 0) is number && data.get('checkinEnergy', 0) >= 0 && data.get('checkinEnergy', 0) <= 10)
+        && (data.get('checkinSleep', 0) is number && data.get('checkinSleep', 0) >= 0 && data.get('checkinSleep', 0) <= 24)
+        && (data.get('checkoutMood', 0) is number && data.get('checkoutMood', 0) >= 0 && data.get('checkoutMood', 0) <= 10)
+        && (data.get('checkoutAnxiety', 0) is number && data.get('checkoutAnxiety', 0) >= 0 && data.get('checkoutAnxiety', 0) <= 10)
+        && (data.get('checkoutEnergy', 0) is number && data.get('checkoutEnergy', 0) >= 0 && data.get('checkoutEnergy', 0) <= 10)
+        && data.get('dayEnded', false) is bool
         && (data.get('checkoutCause', '') is string && data.get('checkoutCause', '').size() <= 1000)
         && (data.get('updatedAt', 0) is number);
     }
@@ -45,19 +47,21 @@ service cloud.firestore {
       return data.userId == existing().userId
         && data.date == existing().date
         && data.createdAt == existing().createdAt
-        && (data.get('checkinMood', 0) is number)
-        && (data.get('checkinAnxiety', 0) is number)
-        && (data.get('checkinEnergy', 0) is number)
-        && (data.get('checkinSleep', 0) is number)
-        && (data.get('checkoutMood', 0) is number)
-        && (data.get('checkoutAnxiety', 0) is number)
-        && (data.get('checkoutEnergy', 0) is number)
+        && (data.get('checkinMood', 0) is number && data.get('checkinMood', 0) >= 0 && data.get('checkinMood', 0) <= 10)
+        && (data.get('checkinAnxiety', 0) is number && data.get('checkinAnxiety', 0) >= 0 && data.get('checkinAnxiety', 0) <= 10)
+        && (data.get('checkinEnergy', 0) is number && data.get('checkinEnergy', 0) >= 0 && data.get('checkinEnergy', 0) <= 10)
+        && (data.get('checkinSleep', 0) is number && data.get('checkinSleep', 0) >= 0 && data.get('checkinSleep', 0) <= 24)
+        && (data.get('checkoutMood', 0) is number && data.get('checkoutMood', 0) >= 0 && data.get('checkoutMood', 0) <= 10)
+        && (data.get('checkoutAnxiety', 0) is number && data.get('checkoutAnxiety', 0) >= 0 && data.get('checkoutAnxiety', 0) <= 10)
+        && (data.get('checkoutEnergy', 0) is number && data.get('checkoutEnergy', 0) >= 0 && data.get('checkoutEnergy', 0) <= 10)
+        && data.get('dayEnded', false) is bool
         && (data.get('checkoutCause', '') is string && data.get('checkoutCause', '').size() <= 1000)
         && data.updatedAt is number;
     }
 
     function isValidTask_Create(data) {
-      return data.keys().hasAll(['userId', 'type', 'text', 'done', 'createdAt'])
+      return data.keys().hasOnly(['userId', 'type', 'text', 'done', 'createdAt', 'updatedAt', 'date', 'time', 'location', 'identityVote', 'isTwoMinute'])
+        && data.keys().hasAll(['userId', 'type', 'text', 'done', 'createdAt'])
         && data.userId == request.auth.uid
         && data.type is string && data.type.size() <= 20 && data.type in ['mit', 'habit']
         && data.text is string && data.text.size() <= 1000
@@ -86,7 +90,8 @@ service cloud.firestore {
     }
 
     function isValidActivityLog_Create(data) {
-      return data.keys().hasAll(['userId', 'date', 'createdAt'])
+      return data.keys().hasOnly(['userId', 'date', 'createdAt', 'done', 'plannedNotDone', 'wouldLikeToDo', 'failureCause'])
+        && data.keys().hasAll(['userId', 'date', 'createdAt'])
         && data.userId == request.auth.uid
         && data.date is string && data.date.size() <= 20
         && data.createdAt is number
@@ -97,12 +102,13 @@ service cloud.firestore {
     }
 
     function isValidReframing_Create(data) {
-      return data.keys().hasAll(['userId', 'situation', 'automaticThought', 'emotion', 'emotionIntensity', 'evidenceFor', 'evidenceAgainst', 'rationalResponse', 'createdAt'])
+      return data.keys().hasOnly(['userId', 'situation', 'automaticThought', 'emotion', 'emotionIntensity', 'evidenceFor', 'evidenceAgainst', 'rationalResponse', 'createdAt'])
+        && data.keys().hasAll(['userId', 'situation', 'automaticThought', 'emotion', 'emotionIntensity', 'evidenceFor', 'evidenceAgainst', 'rationalResponse', 'createdAt'])
         && data.userId == request.auth.uid
         && data.situation is string && data.situation.size() <= 2000
         && data.automaticThought is string && data.automaticThought.size() <= 2000
         && data.emotion is string && data.emotion.size() <= 200
-        && data.emotionIntensity is number
+        && data.emotionIntensity is number && data.emotionIntensity >= 0 && data.emotionIntensity <= 100
         && data.evidenceFor is string && data.evidenceFor.size() <= 2000
         && data.evidenceAgainst is string && data.evidenceAgainst.size() <= 2000
         && data.rationalResponse is string && data.rationalResponse.size() <= 2000
@@ -110,44 +116,47 @@ service cloud.firestore {
     }
 
     function isValidGratitude_Create(data) {
-      return data.keys().hasAll(['userId', 'items', 'createdAt'])
+      return data.keys().hasOnly(['userId', 'items', 'createdAt'])
+        && data.keys().hasAll(['userId', 'items', 'createdAt'])
         && data.userId == request.auth.uid
         && data.items is list
-        && data.items.size() <= 10
+        && data.items.size() <= 3
+        && (data.items.size() < 1 || (data.items[0] is string && data.items[0].size() <= 2000))
+        && (data.items.size() < 2 || (data.items[1] is string && data.items[1].size() <= 2000))
+        && (data.items.size() < 3 || (data.items[2] is string && data.items[2].size() <= 2000))
         && (data.items.size() == 0 || data.items[0] is string)
         && data.createdAt is number;
     }
 
     function isValidLead_Create(data) {
-      return data.keys().hasAll(['userId', 'name', 'stage', 'createdAt'])
+      return data.keys().hasOnly(['userId', 'name', 'stage', 'createdAt', 'updatedAt', 'property', 'notes', 'nextActionDate', 'phone', 'interest', 'propertyValue', 'history', 'type', 'nextActionTime', 'calendarDurationMinutes', 'calendarNotificationMinutes', 'googleCalendarSyncEnabled', 'calendarEventId', 'calendarSyncStatus', 'deletedAt'])
+        && data.keys().hasAll(['userId', 'name', 'stage', 'createdAt'])
         && data.userId == request.auth.uid
-        && data.name is string && data.name.size() <= 100
-        && data.stage is string && data.stage.size() <= 20
+        && data.name is string && data.name.size() > 0 && data.name.size() <= 100
+        && data.stage is string && data.stage.size() <= 30 && data.stage in ['Prospección','Calificación','Seguimiento','Contacto Inicial','Reunión/Tasación','Firma Autorización','Contacto','Reunión','Visita','Visita Coordinada','Negociación','Propuesta','Cierre','Perdido','Cierre (Captada)','Captación','Publicación','Tasación','Firma','Captada']
         && data.createdAt is number
         && (data.get('property', '') is string && data.get('property', '').size() <= 100)
         && (data.get('notes', '') is string && data.get('notes', '').size() <= 2000)
         && (data.get('nextActionDate', 0) is number)
         && (data.get('phone', '') is string && data.get('phone', '').size() <= 50)
-        && (data.get('interest', '') is string && data.get('interest', '').size() <= 50)
-        && (data.get('propertyValue', 0) is number)
+        && (data.get('interest', '') is string && data.get('interest', '') in ['', 'Alto','Medio','Bajo'])
+        && (data.get('propertyValue', 0) is number && data.get('propertyValue', 0) >= 0 && data.get('propertyValue', 0) <= 1000000000000)
         && (data.get('history', []) is list && data.get('history', []).size() <= 1000)
         && (data.get('type', '') is string && data.get('type', '').size() <= 20)
-        && (data.get('updatedAt', 0) is number);
+        && (data.get('updatedAt', 0) is number)
+        && data.get('nextActionTime', '') is string && data.get('nextActionTime', '').size() <= 5
+        && data.get('calendarDurationMinutes',30) is number && data.get('calendarDurationMinutes',30) >= 1 && data.get('calendarDurationMinutes',30) <= 1440
+        && data.get('calendarNotificationMinutes',30) is number && data.get('calendarNotificationMinutes',30) >= 0 && data.get('calendarNotificationMinutes',30) <= 40320
+        && data.get('googleCalendarSyncEnabled',false) is bool
+        && data.get('calendarEventId','') is string && data.get('calendarEventId','').size() <= 1024
+        && data.get('calendarSyncStatus','') in ['', 'pending','cancel-pending','synced','cancelled']
+        && data.get('deletedAt',0) is number && data.get('deletedAt',0) >= 0;
     }
     
     function isValidLead_Update(incoming, existing) {
-       return incoming.diff(existing).affectedKeys().hasOnly(['stage', 'property', 'notes', 'nextActionDate', 'name', 'phone', 'interest', 'propertyValue', 'history', 'type', 'updatedAt'])
-         && (incoming.get('stage', '') is string && incoming.get('stage', '').size() <= 20)
-         && (incoming.get('property', '') is string && incoming.get('property', '').size() <= 100)
-         && (incoming.get('notes', '') is string && incoming.get('notes', '').size() <= 2000)
-         && (incoming.get('nextActionDate', 0) is number)
-         && (incoming.get('name', '') is string && incoming.get('name', '').size() <= 100)
-         && (incoming.get('phone', '') is string && incoming.get('phone', '').size() <= 50)
-         && (incoming.get('interest', '') is string && incoming.get('interest', '').size() <= 50)
-         && (incoming.get('propertyValue', 0) is number)
-         && (incoming.get('history', []) is list && incoming.get('history', []).size() <= 1000)
-         && (incoming.get('type', '') is string && incoming.get('type', '').size() <= 20)
-         && (incoming.get('updatedAt', 0) is number);
+      return isValidLead_Create(incoming)
+        && incoming.userId == existing.userId
+        && incoming.createdAt == existing.createdAt;
     }
 
     // Match Collections
@@ -163,7 +172,7 @@ service cloud.firestore {
         allow list: if isOwner(userId) && isValidId(userId);
         allow create: if isOwner(userId) && isValidId(userId) && isValidId(metricId) && isValidDailyHealthMetric_Create(incoming());
         allow update: if isOwner(userId) && isValidId(userId) && isValidId(metricId) && isValidDailyHealthMetric_Update(incoming())
-            && incoming().diff(existing()).affectedKeys().hasOnly(['checkinMood', 'checkinAnxiety', 'checkinEnergy', 'checkinSleep', 'checkoutMood', 'checkoutAnxiety', 'checkoutEnergy', 'checkoutCause', 'updatedAt']);
+            && incoming().diff(existing()).affectedKeys().hasOnly(['checkinMood', 'checkinAnxiety', 'checkinEnergy', 'checkinSleep', 'checkoutMood', 'checkoutAnxiety', 'checkoutEnergy', 'checkoutCause', 'dayEnded', 'updatedAt']);
         allow delete: if isOwner(userId) && isValidId(userId) && isValidId(metricId);
       }
 
@@ -200,7 +209,7 @@ service cloud.firestore {
         allow list: if isOwner(userId) && isValidId(userId);
         allow create: if isOwner(userId) && isValidId(userId) && isValidId(leadId) && isValidLead_Create(incoming());
         allow update: if isOwner(userId) && isValidId(userId) && isValidId(leadId) && isValidLead_Update(incoming(), existing());
-        allow delete: if isOwner(userId) && isValidId(userId) && isValidId(leadId);
+        allow delete: if false; // Recoverable deletion uses deletedAt; hard deletion is administrator-only.
       }
     }
   }

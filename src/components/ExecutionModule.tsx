@@ -1,3 +1,4 @@
+import { businessDate, daysBetween, calendarDateTime } from '../lib/dates';
 import React, { useState, useEffect } from 'react';
 import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
@@ -27,7 +28,7 @@ export default function ExecutionModule() {
   useEffect(() => {
     if (!auth.currentUser) return;
     const userId = auth.currentUser.uid;
-    const today = new Date().toISOString().split('T')[0];
+    const today = businessDate();
 
     const qTasks = query(collection(db, 'users', userId, 'tasks'));
     const unsubTasks = onSnapshot(qTasks, (snapshot) => {
@@ -52,7 +53,7 @@ export default function ExecutionModule() {
   const addMit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!newMit.trim() || !auth.currentUser) return;
-    const today = new Date().toISOString().split('T')[0];
+    const today = businessDate();
     try {
       await addDoc(collection(db, 'users', auth.currentUser.uid, 'tasks'), {
         userId: auth.currentUser.uid,
@@ -120,7 +121,7 @@ export default function ExecutionModule() {
 
   const addActivityLog = async () => {
     if (!auth.currentUser) return;
-    const today = new Date().toISOString().split('T')[0];
+    const today = businessDate();
     try {
       await addDoc(collection(db, 'users', auth.currentUser.uid, 'activityLogs'), {
         userId: auth.currentUser.uid,
@@ -163,7 +164,7 @@ export default function ExecutionModule() {
   }, {});
 
   const pastDatesKeys = Object.keys(mitsByDate)
-      .filter(date => date !== new Date().toISOString().split('T')[0])
+      .filter(date => date !== businessDate())
       .sort((a, b) => new Date(b).getTime() - new Date(a).getTime())
       .slice(0, 7);
 

@@ -1,4 +1,5 @@
-import { useState, useEffect } from 'react';
+import { businessDate, daysBetween, calendarDateTime } from './lib/dates';
+import { useState, useEffect, Fragment } from 'react';
 import { LayoutDashboard, Brain, Activity, Briefcase, HeartPulse, LifeBuoy } from 'lucide-react';
 import Dashboard from './components/Dashboard';
 import EmotionalModule from './components/EmotionalModule';
@@ -6,7 +7,7 @@ import ExecutionModule from './components/ExecutionModule';
 import ProfessionalModule from './components/ProfessionalModule';
 import HealthModule from './components/HealthModule';
 import SosModal from './components/SosModal';
-import { auth, loginWithGoogle, logout, db } from './lib/firebase';
+import { auth, loginWithGoogle, logout, db, firebaseReady } from './lib/firebase';
 import { onAuthStateChanged, User } from 'firebase/auth';
 import { collection, query, where, onSnapshot, orderBy, limit } from 'firebase/firestore';
 
@@ -16,16 +17,21 @@ export default function App() {
   const [currentView, setCurrentView] = useState<View>('dashboard');
   const [user, setUser] = useState<User | null>(null);
   const [loadingAuth, setLoadingAuth] = useState(true);
+  const [sessionError, setSessionError] = useState('');
+  const [day, setDay] = useState(businessDate());
+  useEffect(()=>{const id=setInterval(()=>setDay(businessDate()),30000);return()=>clearInterval(id);},[]);
   const [hasCheckedIn, setHasCheckedIn] = useState<boolean>(true);
   const [showSos, setShowSos] = useState(false);
   const [consecutiveDaysWarning, setConsecutiveDaysWarning] = useState<'yesterday' | 'multiple' | null>(null);
 
   useEffect(() => {
-    const unsub = onAuthStateChanged(auth, (u) => {
-      setUser(u);
-      setLoadingAuth(false);
-    });
-    return () => unsub();
+    let disposed=false;
+    let unsubscribe=()=>{};
+    firebaseReady.then(()=>{
+      if(disposed)return;
+      unsubscribe=onAuthStateChanged(auth,(u)=>{setUser(u);setShowSos(false);setHasCheckedIn(false);setLoadingAuth(false);});
+    }).catch(()=>{setSessionError('Cierra las otras pestañas de Equilibrio y vuelve a cargar para proteger los datos guardados en este dispositivo.');setLoadingAuth(false);});
+    return()=>{disposed=true;unsubscribe();};
   }, []);
 
   useEffect(() => {
@@ -33,7 +39,7 @@ export default function App() {
     const today = new Date();
     // Normalizing today to start of day for accurate comparison
     today.setHours(0, 0, 0, 0);
-    const todayStr = new Date(today.getTime() - (today.getTimezoneOffset() * 60000)).toISOString().split('T')[0];
+    const todayStr = day;
 
     const q = query(collection(db, 'users', user.uid, 'metrics'), orderBy('date', 'desc'), limit(3));
     
@@ -53,14 +59,7 @@ export default function App() {
                
                // Calculate days missed
                if (isFirstLoad) {
-                   const lastDate = new Date(mostRecentDoc.date);
-                   lastDate.setHours(0,0,0,0);
-                   const lastDateStr = new Date(lastDate.getTime() - (lastDate.getTimezoneOffset() * 60000)).toISOString().split('T')[0];
-                   
-                   // calculate difference in days
-                   const diffTime = Math.abs(today.getTime() - lastDate.getTime());
-                   const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
-                   
+                   const diffDays = daysBetween(day,mostRecentDoc.date);
                    if (diffDays === 1) {
                        setConsecutiveDaysWarning('yesterday');
                    } else if (diffDays > 1) {
@@ -76,9 +75,9 @@ export default function App() {
            }
        }
        isFirstLoad = false;
-    });
+    }, ()=>{setHasCheckedIn(false);setSessionError('No se pudo cargar tu información. Comprueba la conexión y vuelve a cargar.');});
     return () => unsub();
-  }, [user]);
+  }, [user, day]);
 
   const navigation = [
     { id: 'dashboard', label: 'Resumen', icon: LayoutDashboard },
@@ -88,6 +87,7 @@ export default function App() {
     { id: 'health', label: 'Control y Alertas', icon: HeartPulse },
   ];
 
+  if (sessionError) return <div className="flex h-screen items-center justify-center bg-[#F9F8F4] text-[#3E4639] p-8">{sessionError}</div>;
   if (loadingAuth) {
      return <div className="flex h-screen items-center justify-center bg-[#F9F8F4] text-[#3E4639] font-serif">Cargando...</div>;
   }
@@ -174,11 +174,12 @@ export default function App() {
           </div>
           <div className="text-xs opacity-70 border-t border-white/10 pt-2 pb-1">
             {new Date().toLocaleDateString('es-ES', { weekday: 'long', month: 'long', day: 'numeric' }).replace(/^\w/, c => c.toUpperCase())}
+            <button onClick={logout} className="float-right">Cerrar sesión</button>
           </div>
         </div>
         
         <div className="max-w-5xl mx-auto h-full">
-           {renderView()}
+           <Fragment key={`${user.uid}:${day}`}>{renderView()}</Fragment>
         </div>
       </main>
       

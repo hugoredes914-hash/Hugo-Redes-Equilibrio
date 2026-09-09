@@ -1,3 +1,4 @@
+import { businessDate, daysBetween, calendarDateTime } from '../lib/dates';
 import React, { useState, useEffect } from 'react';
 import { Button } from '@/components/ui/button';
 import { Activity, BatteryCharging, Moon, Sun, TrendingUp, AlertCircle, X, MessageCircle } from 'lucide-react';
@@ -48,7 +49,7 @@ export default function HealthModule() {
          setHistory(uniqueHistory);
          
          // Check if today is already started/ended
-         const today = new Date().toISOString().split('T')[0];
+         const today = businessDate();
          const todayMetric = uniqueHistory.find(m => m.date === today);
          
          if (todayMetric) {
@@ -60,7 +61,8 @@ export default function HealthModule() {
                energy: todayMetric.raw.checkinEnergy,
                sleep: todayMetric.raw.checkinSleep
             });
-            if (todayMetric.raw.checkoutCause && todayMetric.raw.checkoutCause !== '') {
+            setIsDayEnded(false);
+            if (todayMetric.raw.dayEnded === true || todayMetric.raw.checkoutCause) {
                setIsDayEnded(true);
                setCheckOut({
                    mood: todayMetric.raw.checkoutMood,
@@ -81,7 +83,7 @@ export default function HealthModule() {
 
   const handleStartDay = async () => {
     if (!auth.currentUser) return;
-    const today = new Date().toISOString().split('T')[0];
+    const today = businessDate();
     const todayMetric = history.find(m => m.date === today);
     try {
         const docRef = doc(db, 'users', auth.currentUser.uid, 'metrics', today);
@@ -105,6 +107,7 @@ export default function HealthModule() {
                 checkoutAnxiety: 0,
                 checkoutEnergy: 0,
                 checkoutCause: '',
+                dayEnded: false,
                 createdAt: Date.now(),
                 updatedAt: Date.now()
             });
@@ -124,6 +127,7 @@ export default function HealthModule() {
             checkoutAnxiety: checkOut.anxiety,
             checkoutEnergy: checkOut.energy,
             checkoutCause: checkOut.cause,
+            dayEnded: true,
             updatedAt: Date.now()
         });
         setIsDayEnded(true);

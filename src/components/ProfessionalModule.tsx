@@ -1,3 +1,6 @@
+import {persistLead,synchronizeLeadCalendar} from '../lib/leads';
+import {downloadCsv} from '../lib/csv';
+import { businessDate, daysBetween, calendarDateTime } from '../lib/dates';
 import React, { useState, useEffect } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -26,7 +29,9 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { auth, db, handleFirestoreError, OperationType } from "../lib/firebase";
 import {
   collection,
+  getDocs,
   addDoc,
+  arrayUnion,
   updateDoc,
   deleteDoc,
   doc,
@@ -182,6 +187,15 @@ export default function ProfessionalModule() {
       setCalendarSyncStatus("Conectando Google...");
       const token = await authorizeGoogleCalendar();
       if (token) {
+        const uid = auth.currentUser?.uid;
+        if (!uid) throw new Error('La sesión cambió');
+        const pending = await getDocs(collection(db, 'users', uid, 'leads'));
+        for (const record of pending.docs) {
+          const lead = record.data();
+          if (lead.calendarSyncStatus === 'pending' || lead.calendarSyncStatus === 'cancel-pending') {
+            await synchronizeLeadCalendar(uid, record.id, lead);
+          }
+        }
         setCalendarSyncStatus("✓ Google Calendar conectado con éxito");
         setTimeout(() => setCalendarSyncStatus(null), 3500);
       } else {
@@ -189,39 +203,25 @@ export default function ProfessionalModule() {
         setTimeout(() => setCalendarSyncStatus(null), 3000);
       }
     } catch (err) {
-      console.error(err);
-      setCalendarSyncStatus("Error de autenticación");
+      setCalendarSyncStatus("No se pudo completar la conexión o la sincronización pendiente");
       setTimeout(() => setCalendarSyncStatus(null), 3000);
     }
   };
 
-  const syncEventToGoogleCalendar = async (
-    leadName: string,
-    notes: string,
-    dateStr: string,
-    phone: string,
-    timeStr?: string,
-    durationMinutes?: number,
-    notificationMinutes?: number,
-  ) => {
-    const isConnected = !!getCachedAccessToken();
-    if (!isConnected) {
-      console.warn("Unsynced as Google Calendar is not authorized.");
-      return false;
-    }
-
-    const timeLabel = timeStr ? ` a las ${timeStr} hs` : '';
-    const ok = await createGoogleCalendarEvent({
-      summary: `Próxima acción con ${leadName}`,
-      description: `CRM Recordatorio de Cliente: ${leadName}\nFecha y Horario: ${dateStr}${timeLabel}\nContacto: ${phone || "No especificado"}\nNotas: ${notes || "No especificadas"}`,
-      startDate: dateStr,
-      time: timeStr,
-      durationMinutes: durationMinutes || 30,
-      notificationMinutes: notificationMinutes !== undefined ? notificationMinutes : 30,
-    });
-    return ok;
+  const notifyCalendar = async (uid:string,id:string,lead:any) => {
+    try {await synchronizeLeadCalendar(uid,id,lead);} catch(error) {window.alert(error instanceof Error?error.message:'CRM guardado; la agenda quedó pendiente.');}
   };
-
+  const leadValues = (lead:any) => ({
+    name:lead.name.trim(),phone:lead.phone||'',property:lead.property||'',notes:lead.notes||'',
+    nextActionDate:lead.stage==='Perdido'||lead.stage?.includes('Cierre')||!lead.nextActionDate?0:calendarDateTime(lead.nextActionDate,lead.nextActionTime||'12:00'),
+    nextActionTime:lead.nextActionTime||'',calendarDurationMinutes:Number(lead.calendarDurationMinutes)||30,
+    calendarNotificationMinutes:lead.calendarNotificationMinutes===''?30:Number(lead.calendarNotificationMinutes??30),
+    propertyValue:Number(lead.propertyValue)||0,interest:lead.interest||'Medio',stage:lead.stage,
+    googleCalendarSyncEnabled:!!lead.googleCalendarSyncEnabled,
+  });
+  const historyItem=(type:string,description:string)=>({id:crypto.randomUUID(),timestamp:Date.now(),type,description});
+  const [saving,setSaving] = useState(false);
+  const savingRef = React.useRef(false);
   useEffect(() => {
     if (!auth.currentUser) return;
     const qLeads = query(
@@ -231,7 +231,7 @@ export default function ProfessionalModule() {
     const unsubLeads = onSnapshot(
       qLeads,
       (snapshot) => {
-        setLeads(snapshot.docs.map((d) => ({ id: d.id, ...d.data() })));
+        setLeads(snapshot.docs.map((d) => ({ id: d.id, ...d.data() })).filter((l:any)=>!l.deletedAt));
       },
       (error) => handleFirestoreError(error, OperationType.LIST, "leads"),
     );
@@ -255,318 +255,48 @@ export default function ProfessionalModule() {
   }, []);
 
   const handleAddLead = async () => {
-    if (!auth.currentUser || !newLead.name) return;
-
-    const isDuplicate = leads.some((lead) => {
-      const samePhone =
-        newLead.phone && lead.phone && newLead.phone === lead.phone;
-      const sameNameProperty =
-        newLead.name.toLowerCase().trim() === lead.name.toLowerCase().trim() &&
-        (newLead.property || "").toLowerCase().trim() ===
-          (lead.property || "").toLowerCase().trim();
-      return samePhone || sameNameProperty;
-    });
-
-    if (isDuplicate) {
-      setLeadError(
-        "Este lead ya existe (mismo teléfono, o mismo nombre y propiedad).",
-      );
-      return;
-    }
-
-    setLeadError("");
-
+    const user=auth.currentUser;if(!user||!newLead.name.trim()||savingRef.current)return;
+    const duplicate=leads.some(l=>(newLead.phone&&l.phone&&newLead.phone.replace(/\D/g,'')===l.phone.replace(/\D/g,''))||(newLead.name.trim().toLowerCase()===l.name.trim().toLowerCase()&&(newLead.property||'').trim().toLowerCase()===(l.property||'').trim().toLowerCase()));
+    if(duplicate){setLeadError('Este lead ya existe (mismo teléfono, o mismo nombre y propiedad).');return;}
+    savingRef.current=true;setSaving(true);setLeadError('');
     try {
-      const isTerminalStage =
-        newLead.stage === "Perdido" || newLead.stage?.includes("Cierre");
-      let parsedDate = 0;
-      if (!isTerminalStage && newLead.nextActionDate) {
-        const timePart = newLead.nextActionTime ? `${newLead.nextActionTime}:00` : "12:00:00";
-        const time = new Date(`${newLead.nextActionDate}T${timePart}`).getTime();
-        if (!isNaN(time)) {
-          parsedDate = time;
-        }
-      }
-
-      const initialHistory = [
-        {
-          id: Math.random().toString(36).substr(2, 9),
-          timestamp: Date.now(),
-          type: "creación",
-          description: "Lead creado",
-        },
-      ];
-
-      if (parsedDate > 0 && newLead.googleCalendarSyncEnabled) {
-        const syncResult = await syncEventToGoogleCalendar(
-          newLead.name,
-          newLead.notes,
-          newLead.nextActionDate,
-          newLead.phone,
-          newLead.nextActionTime,
-          newLead.calendarDurationMinutes,
-          newLead.calendarNotificationMinutes,
-        );
-        if (syncResult) {
-          initialHistory.push({
-            id: Math.random().toString(36).substr(2, 9),
-            timestamp: Date.now(),
-            type: "SISTEMA: Google Calendar",
-            description: `✓ Sincronizado en Google Calendar (${newLead.nextActionDate} ${newLead.nextActionTime || ''} • notif. ${newLead.calendarNotificationMinutes || 30}m antes)`,
-          });
-        }
-      }
-
-      await addDoc(collection(db, "users", auth.currentUser.uid, "leads"), {
-        userId: auth.currentUser.uid,
-        type: activeTab,
-        name: newLead.name,
-        phone: newLead.phone || "",
-        property: newLead.property || "",
-        notes: newLead.notes || "",
-        nextActionDate: parsedDate,
-        nextActionTime: newLead.nextActionTime || "",
-        calendarDurationMinutes: Number(newLead.calendarDurationMinutes) || 30,
-        calendarNotificationMinutes: Number(newLead.calendarNotificationMinutes) || 30,
-        propertyValue: Number(newLead.propertyValue) || 0,
-        interest: newLead.interest || "Medio",
-        stage:
-          newLead.stage ||
-          (activeTab === "captacion" ? CAPTURE_STAGES[0] : SALES_STAGES[0]),
-        googleCalendarSyncEnabled: !!newLead.googleCalendarSyncEnabled,
-        history: initialHistory,
-        createdAt: Date.now(),
-        updatedAt: Date.now(),
-      });
+      const values={...leadValues(newLead),type:activeTab,stage:newLead.stage||(activeTab==='captacion'?CAPTURE_STAGES[0]:SALES_STAGES[0])};
+      const ref=await persistLead(user.uid,undefined,values,[historyItem('creación','Lead creado')]);
       setIsAddingLead(false);
-      setNewLead({
-        name: "",
-        phone: "",
-        property: "",
-        stage: "Prospección",
-        notes: "",
-        nextActionDate: "",
-        nextActionTime: "10:00",
-        calendarDurationMinutes: 30,
-        calendarNotificationMinutes: 30,
-        propertyValue: "",
-        interest: "Medio",
-        googleCalendarSyncEnabled: false,
-      });
-    } catch (error) {
-      handleFirestoreError(error, OperationType.CREATE, "leads");
-    }
+      setNewLead({name:'',phone:'',property:'',stage:'Prospección',notes:'',nextActionDate:'',nextActionTime:'10:00',calendarDurationMinutes:30,calendarNotificationMinutes:30,propertyValue:'',interest:'Medio',googleCalendarSyncEnabled:false});
+      await notifyCalendar(user.uid,ref.id,values);
+    }catch(error){handleFirestoreError(error,OperationType.CREATE,'leads');}
+    finally{savingRef.current=false;setSaving(false);}
   };
-
   const handleSaveEdit = async () => {
-    if (!auth.currentUser || !editingLead) return;
+    const user=auth.currentUser;if(!user||!editingLead||savingRef.current)return;
+    savingRef.current=true;setSaving(true);
     try {
-      const isTerminalStage =
-        editingLead.stage === "Perdido" ||
-        editingLead.stage?.includes("Cierre");
-      let parsedDate = 0;
-      if (!isTerminalStage && editingLead.nextActionDate) {
-        const timePart = editingLead.nextActionTime ? `${editingLead.nextActionTime}:00` : "12:00:00";
-        const time = new Date(
-          `${editingLead.nextActionDate}T${timePart}`,
-        ).getTime();
-        if (!isNaN(time)) {
-          parsedDate = time;
-        }
-      }
-      const leadRef = doc(
-        db,
-        "users",
-        auth.currentUser.uid,
-        "leads",
-        editingLead.id,
-      );
-
-      const originalLead = leads.find((l) => l.id === editingLead.id);
-      let historyType = "edición";
-      let historyDesc = "Datos del lead actualizados";
-
-      if (originalLead) {
-        let changes = [];
-        if (originalLead.stage !== editingLead.stage) {
-          historyType = "etapa";
-          changes.push(`Etapa: ${editingLead.stage}`);
-        }
-        if (originalLead.interest !== editingLead.interest) {
-          if (historyType === "edición") historyType = "interés";
-          changes.push(`Interés: ${editingLead.interest}`);
-        }
-        const oldNotes = originalLead.notes || "";
-        const newNotes = editingLead.notes || "";
-        if (oldNotes !== newNotes && newNotes) {
-          if (historyType === "edición") historyType = "notas";
-          changes.push(`Notas: "${newNotes}"`);
-        } else if (oldNotes !== newNotes && !newNotes) {
-          if (historyType === "edición") historyType = "notas";
-          changes.push(`Notas eliminadas`);
-        }
-
-        const oldPhone = originalLead.phone || "";
-        const newPhone = editingLead.phone || "";
-        if (oldPhone !== newPhone && newPhone) {
-          changes.push(`Teléfono: ${newPhone}`);
-        }
-
-        const oldProp = originalLead.property || "";
-        const newProp = editingLead.property || "";
-        if (oldProp !== newProp && newProp) {
-          changes.push(`Propiedad: ${newProp}`);
-        }
-
-        const oldVal = Number(originalLead.propertyValue) || 0;
-        const newVal = Number(editingLead.propertyValue) || 0;
-        if (oldVal !== newVal && newVal) {
-          changes.push(`Valor: $${newVal}`);
-        }
-
-        if (originalLead.nextActionDate !== parsedDate) {
-          if (parsedDate > 0) {
-            changes.push(
-              `Próxima acción: ${new Date(parsedDate).toLocaleDateString("es-ES")}${editingLead.nextActionTime ? ` ${editingLead.nextActionTime} hs` : ''}`,
-            );
-          } else if (originalLead.nextActionDate > 0) {
-            changes.push(`Próxima acción eliminada`);
-          }
-        }
-
-        if (changes.length > 0) {
-          historyDesc = changes.join(" • ");
-        }
-      }
-
-      const updatedHistory = [...(editingLead.history || [])];
-
-      if (parsedDate > 0 && editingLead.googleCalendarSyncEnabled) {
-        const syncResult = await syncEventToGoogleCalendar(
-          editingLead.name,
-          editingLead.notes,
-          editingLead.nextActionDate,
-          editingLead.phone,
-          editingLead.nextActionTime,
-          editingLead.calendarDurationMinutes,
-          editingLead.calendarNotificationMinutes,
-        );
-        if (syncResult) {
-          updatedHistory.push({
-            id: Math.random().toString(36).substr(2, 9),
-            timestamp: Date.now(),
-            type: "SISTEMA: Google Calendar",
-            description: `✓ Sincronizado en Google Calendar (${editingLead.nextActionDate} ${editingLead.nextActionTime || ''} • notif. ${editingLead.calendarNotificationMinutes || 30}m antes)`,
-          });
-        }
-      }
-
-      const newHistoryItem = {
-        id: Math.random().toString(36).substr(2, 9),
-        timestamp: Date.now(),
-        type: historyType,
-        description: historyDesc,
-      };
-
-      updatedHistory.push(newHistoryItem);
-
-      await updateDoc(leadRef, {
-        name: editingLead.name,
-        phone: editingLead.phone || "",
-        property: editingLead.property || "",
-        notes: editingLead.notes || "",
-        nextActionDate: parsedDate,
-        nextActionTime: editingLead.nextActionTime || "",
-        calendarDurationMinutes: Number(editingLead.calendarDurationMinutes) || 30,
-        calendarNotificationMinutes: Number(editingLead.calendarNotificationMinutes) || 30,
-        propertyValue: Number(editingLead.propertyValue) || 0,
-        interest: editingLead.interest || "Medio",
-        stage: editingLead.stage,
-        googleCalendarSyncEnabled: !!editingLead.googleCalendarSyncEnabled,
-        history: updatedHistory,
-        updatedAt: Date.now(),
-      });
-      setEditingLead(null);
-    } catch (error) {
-      handleFirestoreError(error, OperationType.UPDATE, "leads");
-    }
+      const values=leadValues(editingLead);
+      await persistLead(user.uid,editingLead.id,values,[historyItem('edición','Datos del lead actualizados')]);
+      const saved={...editingLead,...values};setEditingLead(null);
+      await notifyCalendar(user.uid,saved.id,saved);
+    }catch(error){handleFirestoreError(error,OperationType.UPDATE,'leads');}
+    finally{savingRef.current=false;setSaving(false);}
   };
-
-  const handleAddHistory = async (
-    lead: any,
-    type: string,
-    description: string,
-  ) => {
-    if (!auth.currentUser) return;
-    try {
-      const newHistoryItem = {
-        id: Math.random().toString(36).substr(2, 9),
-        timestamp: Date.now(),
-        type,
-        description,
-      };
-      const updatedHistory = [...(lead.history || []), newHistoryItem];
-      await updateDoc(
-        doc(db, "users", auth.currentUser.uid, "leads", lead.id),
-        {
-          history: updatedHistory,
-        },
-      );
-    } catch (e) {
-      console.error("Error adding history", e);
-    }
+  const handleAddHistory = async (lead:any,type:string,description:string) => {
+    const user=auth.currentUser;if(!user)return;
+    try{await persistLead(user.uid,lead.id,{},[historyItem(type,description.slice(0,2000))]);}
+    catch(error){handleFirestoreError(error,OperationType.UPDATE,'leads');}
   };
-
-  const handleUpdateStage = async (lead: any, stage: string) => {
-    if (!auth.currentUser) return;
-    try {
-      let additionalUpdates: any = { stage };
-      let actionDesc = `Etapa cambiada de ${lead.stage} a ${stage}`;
-
-      // Automated funnel actions
-      if (["Contacto", "Reunión", "Negociación"].includes(stage)) {
-        const tomorrow = new Date();
-        tomorrow.setDate(tomorrow.getDate() + 1);
-        const tomorrowTime = tomorrow.getTime();
-        if (!lead.nextActionDate || lead.nextActionDate < Date.now()) {
-          additionalUpdates.nextActionDate = tomorrowTime;
-          actionDesc += ". Auto-agendado seguimiento para mañana.";
-        }
+  const handleUpdateStage = async (lead:any,stage:string) => {
+    const user=auth.currentUser;if(!user||savingRef.current)return;
+    savingRef.current=true;
+    try{
+      const changes:any={stage};
+      if(stage==='Perdido'||stage.includes('Cierre'))changes.nextActionDate=0;
+      else if(['Contacto Inicial','Reunión/Tasación','Seguimiento','Propuesta','Firma Autorización'].includes(stage)&&(!lead.nextActionDate||lead.nextActionDate<Date.now())){
+        changes.nextActionDate=calendarDateTime(businessDate(Date.now()+86400000),lead.nextActionTime||'10:00');
       }
-
-      if (additionalUpdates.nextActionDate && lead.googleCalendarSyncEnabled) {
-        const autoDateStr = new Date(additionalUpdates.nextActionDate)
-          .toISOString()
-          .split("T")[0];
-        await syncEventToGoogleCalendar(
-          lead.name,
-          lead.notes || `Contacto / Seguimiento automatizado etapa: ${stage}`,
-          autoDateStr,
-          lead.phone,
-          lead.nextActionTime || "10:00",
-          lead.calendarDurationMinutes || 30,
-          lead.calendarNotificationMinutes !== undefined ? lead.calendarNotificationMinutes : 30,
-        );
-      }
-
-      const newHistoryItem = {
-        id: Math.random().toString(36).substr(2, 9),
-        timestamp: Date.now(),
-        type: "SISTEMA: Cambio de Etapa",
-        description: actionDesc,
-      };
-
-      const updatedHistory = [...(lead.history || []), newHistoryItem];
-      additionalUpdates.history = updatedHistory;
-      additionalUpdates.updatedAt = Date.now();
-
-      await updateDoc(
-        doc(db, "users", auth.currentUser.uid, "leads", lead.id),
-        additionalUpdates,
-      );
-    } catch (error) {
-      handleFirestoreError(error, OperationType.UPDATE, "leads");
-    }
+      await persistLead(user.uid,lead.id,changes,[historyItem('SISTEMA: Cambio de Etapa',`Etapa cambiada de ${lead.stage} a ${stage}`)]);
+      await notifyCalendar(user.uid,lead.id,{...lead,...changes});
+    }catch(error){handleFirestoreError(error,OperationType.UPDATE,'leads');}
+    finally{savingRef.current=false;}
   };
 
   const handleDeleteLead = (leadId: string) => {
@@ -574,15 +304,16 @@ export default function ProfessionalModule() {
   };
 
   const confirmDeleteLead = async () => {
-    if (!auth.currentUser || !leadToDelete) return;
-    try {
-      await deleteDoc(
-        doc(db, "users", auth.currentUser.uid, "leads", leadToDelete),
-      );
+    const user=auth.currentUser;if(!user||!leadToDelete||savingRef.current)return;
+    const lead=leads.find(l=>l.id===leadToDelete);if(!lead)return;
+    savingRef.current=true;
+    try{
+      const deletedAt=Date.now();
+      await persistLead(user.uid,lead.id,{deletedAt},[historyItem('eliminación','Registro enviado a recuperación')]);
       setLeadToDelete(null);
-    } catch (error) {
-      handleFirestoreError(error, OperationType.DELETE, "leads");
-    }
+      await notifyCalendar(user.uid,lead.id,{...lead,deletedAt});
+    }catch(error){handleFirestoreError(error,OperationType.DELETE,'leads');}
+    finally{savingRef.current=false;}
   };
 
   const draftMessage = async (lead: any) => {
@@ -646,35 +377,9 @@ export default function ProfessionalModule() {
         l.property?.toLowerCase().includes(search.toLowerCase()),
     );
 
-    filteredLeads.forEach((lead) => {
-      const actionDate = lead.nextActionDate
-        ? new Date(lead.nextActionDate).toLocaleDateString("es-ES")
-        : "";
-      const row = [
-        `"${(lead.name || "").replace(/"/g, '""')}"`,
-        `"${(lead.phone || "").replace(/"/g, '""')}"`,
-        `"${(lead.property || "").replace(/"/g, '""')}"`,
-        `"${lead.propertyValue || ""}"`,
-        `"${(lead.stage || "").replace(/"/g, '""')}"`,
-        `"${(lead.interest || "").replace(/"/g, '""')}"`,
-        `"${actionDate}"`,
-        `"${(lead.notes || "").replace(/"/g, '""')}"`,
-      ];
-      csvRows.push(row.join(","));
-    });
-
-    const csvContent =
-      "data:text/csv;charset=utf-8," + "\uFEFF" + csvRows.join("\n");
-    const encodedUri = encodeURI(csvContent);
-    const link = document.createElement("a");
-    link.setAttribute("href", encodedUri);
-    link.setAttribute(
-      "download",
-      `Leads_${activeTab}_${new Date().toISOString().split("T")[0]}.csv`,
-    );
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
+    const rows:any[][]=[['Nombre','Teléfono','Propiedad','Valor USD','Etapa','Interés','Próxima acción','Notas']];
+    filteredLeads.forEach(lead=>rows.push([lead.name,lead.phone,lead.property,lead.propertyValue,lead.stage,lead.interest,lead.nextActionDate?businessDate(lead.nextActionDate):'',lead.notes]));
+    downloadCsv(rows,`Leads_${activeTab}_${businessDate()}.csv`);
   };
 
   const handleAIParse = async () => {
@@ -682,6 +387,7 @@ export default function ProfessionalModule() {
     setIsAILoading(true);
     try {
       const parsed = await parseLeadWithAI(aiInputText);
+      if(parsed.source==='local')window.alert('Extracción local, sin IA externa. Revisa los campos antes de guardar.');
 
       setNewLead((prev) => ({
         ...prev,
@@ -1314,7 +1020,7 @@ export default function ProfessionalModule() {
                           let t = lead.nextActionTime || "10:00";
                           if (lead.nextActionDate) {
                             const dt = new Date(lead.nextActionDate);
-                            d = dt.toISOString().split("T")[0];
+                            d = businessDate(dt);
                             if (!lead.nextActionTime) {
                               const h = String(dt.getHours()).padStart(2, '0');
                               const m = String(dt.getMinutes()).padStart(2, '0');
@@ -1396,7 +1102,7 @@ export default function ProfessionalModule() {
                               let t = lead.nextActionTime || "10:00";
                               if (lead.nextActionDate) {
                                 const dt = new Date(lead.nextActionDate);
-                                d = dt.toISOString().split("T")[0];
+                                d = businessDate(dt);
                                 if (!lead.nextActionTime) {
                                   const h = String(dt.getHours()).padStart(2, '0');
                                   const m = String(dt.getMinutes()).padStart(2, '0');
@@ -1446,7 +1152,7 @@ export default function ProfessionalModule() {
                                     let t = lead.nextActionTime || "10:00";
                                     if (lead.nextActionDate) {
                                       const dt = new Date(lead.nextActionDate);
-                                      d = dt.toISOString().split("T")[0];
+                                      d = businessDate(dt);
                                       if (!lead.nextActionTime) {
                                         const h = String(dt.getHours()).padStart(2, '0');
                                         const m = String(dt.getMinutes()).padStart(2, '0');

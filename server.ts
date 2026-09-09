@@ -1,13 +1,19 @@
-import "dotenv/config";
+import { config } from "dotenv";
+config({path:[".env.local", ".env"]});
 import express from "express";
 import path from "path";
 import { GoogleGenAI } from "@google/genai";
-import { createServer as createViteServer } from "vite";
+import helmet from "helmet";
+import { requireUser, aiRateLimit, aiDailyLimit, limitConcurrency, validateAIRequest, parsedLeadSchema, adviceSchema, sosSchema } from "./server/security";
 
 const app = express();
-const PORT = 3000;
+const PORT = Number(process.env.PORT || 3000);
 
-app.use(express.json());
+app.disable('x-powered-by');
+app.use(helmet({contentSecurityPolicy:false,crossOriginEmbedderPolicy:false,frameguard:false}));
+app.use('/api', (_req,res,next)=>{res.setHeader('Cache-Control','no-store');next();});
+app.get('/api/health', (_req,res)=>res.json({status:'ok'}));
+app.use('/api/gemini', requireUser, aiRateLimit, aiDailyLimit, express.json({limit:'32kb'}), validateAIRequest, limitConcurrency);
 
 // Lazy-initialize Gemini SDK with telemetry header and quota management
 let aiClient: GoogleGenAI | null = null;
@@ -45,6 +51,7 @@ function getAI(): GoogleGenAI | null {
       aiClient = new GoogleGenAI({
         apiKey: key,
         httpOptions: {
+          timeout: 25000,
           headers: {
             "User-Agent": "aistudio-build",
           },
@@ -131,9 +138,7 @@ function fallbackParseLead(text: string) {
 }
 
 // 1. Health check
-app.get("/api/health", (req, res) => {
-  res.json({ status: "ok", geminiKeyConfigured: !!process.env.GEMINI_API_KEY });
-});
+
 
 // 2. Parse Lead with AI
 app.post("/api/gemini/parse-lead", async (req, res) => {
@@ -160,7 +165,7 @@ Texto a analizar: "${text}"
 Responde EXCLUSIVAMENTE con el objeto JSON válido, sin bloques de código ni comentarios.`;
 
       const response = await ai.models.generateContent({
-        model: "gemini-3.8-flash",
+        model: process.env.GEMINI_MODEL || "gemini-flash-latest",
         contents: prompt,
         config: {
           responseMimeType: "application/json",
@@ -169,7 +174,7 @@ Responde EXCLUSIVAMENTE con el objeto JSON válido, sin bloques de código ni co
 
       if (response.text) {
         let cleanText = response.text.replace(/```json\n?/g, "").replace(/```\n?/g, "").trim();
-        const parsed = JSON.parse(cleanText);
+        const parsed = parsedLeadSchema.parse(JSON.parse(cleanText));
         return res.json({ success: true, lead: parsed });
       }
     } catch (err: any) {
@@ -200,7 +205,7 @@ Redacta un mensaje de WhatsApp corto, empático y directo para contactar a este 
 Solo responde con el mensaje redactado, sin introducciones ni comillas.`;
 
       const response = await ai.models.generateContent({
-        model: "gemini-3.8-flash",
+        model: process.env.GEMINI_MODEL || "gemini-flash-latest",
         contents: prompt,
       });
 
@@ -233,13 +238,13 @@ app.post("/api/gemini/report", async (req, res) => {
   if (ai && Array.isArray(leads) && leads.length > 0) {
     try {
       const reportData = leads
-        .map((l: any) => `- Nombre: ${l.name}. Etapa: ${l.stage}. Valor: $${l.propertyValue || 0}. Interés: ${l.interest}.`)
+        .map((l: any) => `- Etapa: ${l.stage}. Valor: $${l.propertyValue || 0}. Interés: ${l.interest}.`)
         .join("\n");
 
       let metricsSummary = "No hay registro emocional reciente.";
       if (Array.isArray(metricsHistory) && metricsHistory.length > 0) {
         metricsSummary = metricsHistory
-          .map((m: any) => `Fecha: ${m.date}, Estrés: ${m.stressLevel}/10, Productividad: ${m.productivityLevel}/10`)
+          .map((m: any) => `Fecha: ${m.date}, Estrés: ${m.checkinAnxiety}/10, Energía: ${m.checkinEnergy}/10, Ánimo: ${m.checkinMood}/10`)
           .join("\n");
       }
 
@@ -259,7 +264,7 @@ Estructura sugerida:
 REGLA ESTRICTA: NO USES FORMATO MARKDOWN (ni asteriscos, ni numerales). Usa emojis para títulos.`;
 
       const response = await ai.models.generateContent({
-        model: "gemini-3.8-flash",
+        model: process.env.GEMINI_MODEL || "gemini-flash-latest",
         contents: prompt,
       });
 
@@ -302,9 +307,9 @@ app.post("/api/gemini/anchor-advice", async (req, res) => {
       const mitTexts = Array.isArray(mits) ? mits.map((m: any) => m.text).join(", ") : "Ninguna registrada hoy";
       const prompt = `Actúa como un coach de alto rendimiento y PNL.
 El usuario tiene hoy este estado:
-- Ánimo: ${status.mood || 5}/10
-- Energía: ${status.energy || 5}/10
-- Ansiedad: ${status.anxiety || 5}/10
+- Ánimo: ${status.mood ?? 5}/10
+- Energía: ${status.energy ?? 5}/10
+- Ansiedad: ${status.anxiety ?? 5}/10
 
 Sus tareas principales (MIT) para hoy son:
 [${mitTexts}]
@@ -322,7 +327,7 @@ Devuelve EXCLUSIVAMENTE un JSON con este formato y nada más:
 }`;
 
       const response = await ai.models.generateContent({
-        model: "gemini-3.8-flash",
+        model: process.env.GEMINI_MODEL || "gemini-flash-latest",
         contents: prompt,
         config: {
           responseMimeType: "application/json",
@@ -331,7 +336,7 @@ Devuelve EXCLUSIVAMENTE un JSON con este formato y nada más:
 
       if (response.text) {
         let cleanText = response.text.replace(/```json\n?/g, "").replace(/```\n?/g, "").trim();
-        const parsed = JSON.parse(cleanText);
+        const parsed = adviceSchema.parse(JSON.parse(cleanText));
         return res.json({ success: true, data: parsed });
       }
     } catch (err: any) {
@@ -345,7 +350,7 @@ Devuelve EXCLUSIVAMENTE un JSON con este formato y nada más:
 
   let targetMit = "";
   if (Array.isArray(mits) && mits.length > 0) {
-    const firstActive = mits.find((m: any) => !m.completed) || mits[0];
+    const firstActive = mits.find((m: any) => !m.done) || mits[0];
     if (firstActive) {
       targetMit = typeof firstActive === "string" ? firstActive : firstActive.text || "";
     }
@@ -402,7 +407,7 @@ Los 5 roles son:
 No incluyas markdown. Solo el array JSON.`;
 
       const response = await ai.models.generateContent({
-        model: "gemini-3.8-flash",
+        model: process.env.GEMINI_MODEL || "gemini-flash-latest",
         contents: prompt,
         config: {
           responseMimeType: "application/json",
@@ -411,7 +416,7 @@ No incluyas markdown. Solo el array JSON.`;
 
       if (response.text) {
         let cleanText = response.text.replace(/```json\n?/g, "").replace(/```\n?/g, "").trim();
-        const parsed = JSON.parse(cleanText);
+        const parsed = sosSchema.parse(JSON.parse(cleanText));
         return res.json({ success: true, perspectives: parsed });
       }
     } catch (err: any) {
@@ -457,20 +462,27 @@ No incluyas markdown. Solo el array JSON.`;
 
 async function startServer() {
   // Vite middleware for development
+  if (process.env.NODE_ENV === 'production' && (process.env.FIREBASE_AUTH_EMULATOR_HOST || process.env.FIRESTORE_EMULATOR_HOST)) throw new Error('Emulators must not be enabled in production');
+  app.use('/api', (_req,res)=>{res.status(404).json({error:'Ruta no disponible.'});});
   if (process.env.NODE_ENV !== "production") {
+    const {createServer:createViteServer} = await import('vite');
     const vite = await createViteServer({
       server: { middlewareMode: true },
       appType: "spa",
     });
     app.use(vite.middlewares);
   } else {
-    const distPath = path.join(process.cwd(), "dist");
+    const distPath = path.join(process.cwd(), "dist", "public");
     app.use(express.static(distPath));
     app.get("*", (req, res) => {
+      if (req.path.split('/').some(segment => segment.startsWith('.')) || path.extname(req.path) || req.path.startsWith('/server')) return void res.status(404).end();
       res.sendFile(path.join(distPath, "index.html"));
     });
   }
 
+  app.use((err:any,_req:express.Request,res:express.Response,_next:express.NextFunction)=>{
+    res.status(err?.type==='entity.too.large'?413:400).json({error:'No se pudo procesar la solicitud.'});
+  });
   app.listen(PORT, "0.0.0.0", () => {
     console.log(`Server running on http://localhost:${PORT}`);
   });

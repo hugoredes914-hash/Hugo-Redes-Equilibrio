@@ -1,147 +1,47 @@
-import { GoogleAuthProvider, signInWithPopup } from 'firebase/auth';
+import { GoogleAuthProvider, reauthenticateWithPopup, onAuthStateChanged } from 'firebase/auth';
 import { auth } from './firebase';
-
-let cachedAccessToken: string | null = null;
-
-export const getCachedAccessToken = () => cachedAccessToken;
-export const setCachedAccessToken = (token: string | null) => {
-  cachedAccessToken = token;
-};
-
-export const authorizeGoogleCalendar = async (): Promise<string | null> => {
-  const provider = new GoogleAuthProvider();
-  provider.addScope('https://www.googleapis.com/auth/calendar.events');
-  provider.setCustomParameters({
-    prompt: 'consent',
-  });
-  
-  try {
-    const result = await signInWithPopup(auth, provider);
-    const credential = GoogleAuthProvider.credentialFromResult(result);
-    if (credential?.accessToken) {
-      cachedAccessToken = credential.accessToken;
-      return cachedAccessToken;
-    }
-  } catch (error) {
-    console.error("Error connecting to Google Calendar", error);
-    throw error;
-  }
-  return null;
-};
-
-export interface CalendarEvent {
-  summary: string;
-  description: string;
-  startDate: string; // "YYYY-MM-DD"
-  time?: string; // "HH:MM" (e.g. "10:30")
-  durationMinutes?: number; // e.g. 30, 60
-  notificationMinutes?: number; // e.g. 10, 15, 30, 60, 1440
-  location?: string;
+import { BUSINESS_TIME_ZONE, calendarDateTime, businessDate } from './dates';
+let cached: {token:string;uid:string;expiresAt:number}|null=null;
+onAuthStateChanged(auth, user=>{if(!user || cached?.uid!==user.uid)cached=null;});
+export function getCachedAccessToken() {
+  if(!cached || cached.uid!==auth.currentUser?.uid || cached.expiresAt<=Date.now()){cached=null;return null;}
+  return cached.token;
 }
-
-export const createGoogleCalendarEvent = async (event: CalendarEvent): Promise<boolean> => {
-  const token = cachedAccessToken;
-  if (!token) {
-    console.error("No access token found. Please authorize Google Calendar.");
-    return false;
-  }
-
-  const notificationMin = event.notificationMinutes !== undefined ? event.notificationMinutes : 30;
-  const timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone || 'America/Asuncion';
-
-  let eventBody: any = {
-    summary: event.summary,
-    description: event.description,
-    reminders: {
-      useDefault: false,
-      overrides: [
-        { method: 'popup', minutes: notificationMin },
-        { method: 'email', minutes: notificationMin }
-      ]
-    }
-  };
-
-  if (event.location) {
-    eventBody.location = event.location;
-  }
-
-  if (event.time && event.time.includes(':')) {
-    const [hoursStr, minutesStr] = event.time.split(':');
-    const hours = parseInt(hoursStr, 10);
-    const minutes = parseInt(minutesStr, 10);
-
-    const [year, month, day] = event.startDate.split('-').map(Number);
-    const startDateTime = new Date(year, month - 1, day, hours, minutes, 0);
-    const duration = event.durationMinutes || 30;
-    const endDateTime = new Date(startDateTime.getTime() + duration * 60 * 1000);
-
-    // Format ISO strings without milliseconds
-    const formatISO = (d: Date) => {
-      const pad = (n: number) => String(n).padStart(2, '0');
-      return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}:00`;
-    };
-
-    eventBody.start = {
-      dateTime: `${formatISO(startDateTime)}`,
-      timeZone: timeZone,
-    };
-    eventBody.end = {
-      dateTime: `${formatISO(endDateTime)}`,
-      timeZone: timeZone,
-    };
-  } else {
-    const startAndEnd = getEventDates(event.startDate);
-    eventBody.start = {
-      date: startAndEnd.start,
-    };
-    eventBody.end = {
-      date: startAndEnd.end,
-    };
-  }
-  
-  try {
-    const response = await fetch('https://www.googleapis.com/calendar/v3/calendars/primary/events', {
-      method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${token}`,
-        'Content-Type': 'application/json'
-      },
-      body: JSON.stringify(eventBody)
-    });
-    
-    if (response.ok) {
-      console.log("Calendar event created successfully with notification:", notificationMin, "minutes");
-      return true;
-    } else {
-      const errData = await response.json();
-      console.error("Error creating Google Calendar event:", errData);
-      return false;
-    }
-  } catch (err) {
-    console.error("Network error when creating Google Calendar event", err);
-    return false;
-  }
-};
-
-// Helper to calculate exact exclusive end date for all-day events
-function getEventDates(startDateStr: string) {
-  const dateParts = startDateStr.split('-');
-  const year = parseInt(dateParts[0], 10);
-  const month = parseInt(dateParts[1], 10) - 1;
-  const day = parseInt(dateParts[2], 10);
-  
-  const startDate = new Date(year, month, day);
-  const endDate = new Date(year, month, day + 1);
-  
-  const format = (d: Date) => {
-    const y = d.getFullYear();
-    const m = String(d.getMonth() + 1).padStart(2, '0');
-    const dayStr = String(d.getDate()).padStart(2, '0');
-    return `${y}-${m}-${dayStr}`;
-  };
-  
-  return {
-    start: format(startDate),
-    end: format(endDate)
-  };
+export function clearCalendarToken(){cached=null;}
+export async function authorizeGoogleCalendar():Promise<string|null> {
+  const user=auth.currentUser;if(!user)throw new Error('Inicia sesión primero.');
+  const provider=new GoogleAuthProvider();provider.addScope('https://www.googleapis.com/auth/calendar.events');
+  provider.setCustomParameters({prompt:'consent',login_hint:user.email||''});
+  const result=await reauthenticateWithPopup(user,provider);
+  if(auth.currentUser?.uid!==user.uid)throw new Error('La sesión cambió.');
+  const token=GoogleAuthProvider.credentialFromResult(result)?.accessToken;
+  if(token)cached={token,uid:user.uid,expiresAt:Date.now()+50*60_000};return token||null;
+}
+export interface CalendarEvent {id:string;summary:string;description:string;startDate:string;time?:string;durationMinutes?:number;notificationMinutes?:number;location?:string;}
+export async function calendarEventId(uid:string,leadId:string) {
+  const hash=await crypto.subtle.digest('SHA-256',new TextEncoder().encode(`equilibrio:${uid}:${leadId}`));
+  return 'eq'+Array.from(new Uint8Array(hash)).map(b=>b.toString(16).padStart(2,'0')).join('');
+}
+async function request(path:string,method:string,body?:unknown) {
+  const token=getCachedAccessToken();const uid=auth.currentUser?.uid;
+  if(!token||!uid)throw new Error('Conecta Google Calendar nuevamente para sincronizar.');
+  const response=await fetch(`https://www.googleapis.com/calendar/v3/calendars/primary/events${path}`,{method,
+    headers:{Authorization:`Bearer ${token}`,'Content-Type':'application/json'},body:body?JSON.stringify(body):undefined,signal:AbortSignal.timeout(15000)});
+  if(auth.currentUser?.uid!==uid)throw new Error('La sesión cambió.');
+  if(response.status===401){cached=null;throw new Error('La conexión con Calendar venció. Reconéctala.');}return response;
+}
+export async function createGoogleCalendarEvent(event:CalendarEvent):Promise<boolean> {
+  const duration=event.durationMinutes??30,notification=event.notificationMinutes??30;
+  if(!/^[a-v0-9]{5,1024}$/.test(event.id)||duration<1||duration>1440||notification<0||notification>40320)throw new Error('Agenda no válida');
+  const body:any={summary:event.summary,description:event.description,reminders:{useDefault:false,overrides:[{method:'popup',minutes:notification},{method:'email',minutes:notification}]}};
+  if(event.location)body.location=event.location;
+  if(event.time){const start=calendarDateTime(event.startDate,event.time);if(!Number.isFinite(start))throw new Error('Fecha no válida');
+    body.start={dateTime:new Date(start).toISOString(),timeZone:BUSINESS_TIME_ZONE};body.end={dateTime:new Date(start+duration*60000).toISOString(),timeZone:BUSINESS_TIME_ZONE};
+  }else{const noon=calendarDateTime(event.startDate,'12:00');if(!Number.isFinite(noon))throw new Error('Fecha no válida');body.start={date:event.startDate};body.end={date:businessDate(noon+86400000)};}
+  let response=await request('','POST',{id:event.id,...body});if(response.status===409)response=await request('/'+event.id,'PATCH',body);
+  if(!response.ok)throw new Error('No se pudo sincronizar con Calendar. El registro del CRM permanece guardado.');return true;
+}
+export async function cancelGoogleCalendarEvent(eventId:string) {
+  if(!/^[a-v0-9]{5,1024}$/.test(eventId))throw new Error('Identificador no válido');
+  const response=await request('/'+eventId,'DELETE');if(!response.ok&&response.status!==404&&response.status!==410)throw new Error('No se pudo cancelar el recordatorio.');
 }

@@ -1,3 +1,4 @@
+import { businessDate, daysBetween, calendarDateTime } from '../lib/dates';
 import React, { useState, useEffect } from 'react';
 import { Brain, Activity, ChevronRight, Loader2 } from 'lucide-react';
 import { Progress } from '@/components/ui/progress';
@@ -6,24 +7,17 @@ import { auth, db, handleFirestoreError, OperationType } from '../lib/firebase';
 import { collection, query, onSnapshot, orderBy, limit } from 'firebase/firestore';
 import { generateAnchorAndAdvice } from '../lib/gemini';
 
-const defaultChartData = [
-  { name: 'Lun', resiliencia: 40, ejecucion: 24 },
-  { name: 'Mar', resiliencia: 45, ejecucion: 30 },
-  { name: 'Mie', resiliencia: 42, ejecucion: 28 },
-  { name: 'Jue', resiliencia: 50, ejecucion: 40 },
-  { name: 'Vie', resiliencia: 60, ejecucion: 55 },
-  { name: 'Sab', resiliencia: 65, ejecucion: 50 },
-  { name: 'Dom', resiliencia: 70, ejecucion: 65 },
-];
-
 export default function Dashboard({ onNavigate }: { onNavigate: (view: any) => void }) {
   const currentDate = new Date().toLocaleDateString('es-ES', { month: 'long', day: 'numeric', year: 'numeric' });
   const [tasks, setTasks] = useState<any[]>([]);
   const [metrics, setMetrics] = useState<any[]>([]);
+  const [tasksLoaded,setTasksLoaded] = useState(false);
+  const [metricsLoaded,setMetricsLoaded] = useState(false);
   const [leads, setLeads] = useState<any[]>([]);
-  const [chartData, setChartData] = useState(defaultChartData);
+  const [chartData, setChartData] = useState<any[]>([]);
   
   const [anchor, setAnchor] = useState({
+     source: "Orientación local",
      anchor: "Cada problema es información. Un obstáculo me enseña cómo preparar mejor la próxima oferta.",
      theme: "Mentalidad de Aprendiz",
      recommendation: "Avanza a tu ritmo, una tarea a la vez."
@@ -38,6 +32,7 @@ export default function Dashboard({ onNavigate }: { onNavigate: (view: any) => v
      const qTasks = query(collection(db, 'users', userId, 'tasks'));
      const unsubTasks = onSnapshot(qTasks, (snapshot) => {
         setTasks(snapshot.docs.map(d => ({ id: d.id, ...d.data() })));
+        setTasksLoaded(true);
      }, (err) => handleFirestoreError(err, OperationType.LIST, 'tasks'));
 
      // Fetch metrics
@@ -51,12 +46,13 @@ export default function Dashboard({ onNavigate }: { onNavigate: (view: any) => v
         const uniqueMetrics = Array.from(uniqueMetricsMap.values());
         
         setMetrics(uniqueMetrics);
+        setMetricsLoaded(true);
      }, (error) => handleFirestoreError(error, OperationType.LIST, 'metrics'));
 
      // Fetch leads for CRM summary
      const qLeads = query(collection(db, 'users', userId, 'leads'), orderBy('createdAt', 'desc'));
      const unsubLeads = onSnapshot(qLeads, (snapshot) => {
-        setLeads(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })));
+        setLeads(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })).filter((l:any)=>!l.deletedAt));
      }, (error) => handleFirestoreError(error, OperationType.LIST, 'leads'));
 
      return () => {
@@ -67,6 +63,7 @@ export default function Dashboard({ onNavigate }: { onNavigate: (view: any) => v
   }, []);
   
   useEffect(() => {
+     if (metrics.length === 0) setChartData([]);
      if (metrics.length > 0) {
          const newChartData = metrics.map((d: any) => {
              const dateStr = d.date.split('-');
@@ -97,7 +94,7 @@ export default function Dashboard({ onNavigate }: { onNavigate: (view: any) => v
   useEffect(() => {
      const runGemini = async () => {
          // Genera el ancla del día independientemente de si hay tareas o métricas, pero se ajusta
-         const today = new Date().toISOString().split('T')[0];
+         const today = businessDate();
          const todayMetric = metrics.find(m => m.date === today);
          const todayMits = tasks.filter(t => t.type === 'mit' && t.date === today);
          
@@ -106,20 +103,18 @@ export default function Dashboard({ onNavigate }: { onNavigate: (view: any) => v
              ? { mood: todayMetric.checkinMood, energy: todayMetric.checkinEnergy, anxiety: todayMetric.checkinAnxiety }
              : { mood: 5, energy: 5, anxiety: 5 }; // default neutral
              
-         const result = await generateAnchorAndAdvice(statusParams, todayMits);
-         setAnchor(result);
-         setLoadingAnchor(false);
+         try {const result = await generateAnchorAndAdvice(statusParams, todayMits); setAnchor(result);} catch { /* session invalidated; retain local guidance */ } finally {setLoadingAnchor(false);}
      };
      
      // Only run once when we get initial valid data or after 1 sec
-     if (!loadingAnchor && !fetchedRef.current) {
+     if (tasksLoaded && metricsLoaded && !loadingAnchor && !fetchedRef.current) {
          fetchedRef.current = true;
          runGemini();
      }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [tasks, metrics]);
+  }, [tasks, metrics, tasksLoaded, metricsLoaded]);
 
-  const today = new Date().toISOString().split('T')[0];
+  const today = businessDate();
   const todayMits = tasks.filter(t => t.type === 'mit' && t.date === today);
   const doneMits = todayMits.filter(t => t.done).length;
   const mitsProgress = todayMits.length > 0 ? Math.round((doneMits / todayMits.length) * 100) : 0;
@@ -147,7 +142,7 @@ export default function Dashboard({ onNavigate }: { onNavigate: (view: any) => v
   const pendingActions = leads.filter(l => {
     if (l.stage === 'Perdido' || l.stage === 'Cierre' || l.stage === 'Cierre (Captada)') return false;
     if (!l.nextActionDate) return false;
-    const actionDate = new Date(l.nextActionDate).toISOString().split('T')[0];
+    const actionDate = businessDate(l.nextActionDate);
     return actionDate <= today;
   });
 
@@ -320,7 +315,7 @@ export default function Dashboard({ onNavigate }: { onNavigate: (view: any) => v
               <p className="text-sm text-[#7B8371]">Asesoría de IA en base a tu estado de biometría actual.</p>
             </div>
             <div className="bg-[#F9F8F4] px-3 py-1 rounded-full text-xs font-medium text-[#A3B18A] border border-[#A3B18A]">
-              ✨ Inteligencia Artificial
+              ✨ {anchor.source}
             </div>
           </div>
           
