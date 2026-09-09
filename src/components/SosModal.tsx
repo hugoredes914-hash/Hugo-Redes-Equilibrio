@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { X, ShieldAlert, PhoneCall, DollarSign, Timer, AlertTriangle, Loader2 } from 'lucide-react';
-import { getGemini } from '../lib/gemini';
+import { generateSosHelp } from '../lib/gemini';
 
 const BLOCKS = [
   { id: 'rechazo', icon: PhoneCall, label: 'Evito llamar / Miedo al rechazo' },
@@ -20,35 +20,12 @@ export default function SosModal({ onClose }: { onClose: () => void }) {
     setPerspectives([]);
     
     try {
-      const gemini = getGemini();
-      const prompt = `Actúa como 5 personalidades disociadas para ayudar a un emprendedor/vendedor inmobiliario que sufre de este bloqueo: "${block}".
-      
-      Devuelve la respuesta en JSON puro, que sea un array de objetos, cada uno con properties "role" (nombre del rol en mayúsculas) y "advice" (un consejo directo, frío, impactante, de 2 o 3 oraciones cortas).
-      
-      Los 5 roles son:
-      1. PSIQUIATRA (científico, explica qué parte del cerebro está actuando y cómo calmar la amígdala).
-      2. PNL (reframing del rechazo, la creencia y la identidad).
-      3. VENTAS (frío, matemático, ley de promedios, cierre lógico).
-      4. CEO (exigente, pragmático, enfocado en resultados y ejecución).
-      5. COACH (inspirador, centrado en respirar, contar hasta 5 y moverse ahora).
-      
-      No incluyas markdown. Solo el array JSON.`;
-      
-      const response = await gemini.models.generateContent({
-        model: 'gemini-flash-latest',
-        contents: prompt,
-        config: {
-          responseMimeType: "application/json",
-        }
-      });
-      
-      let text = response.text || '[]';
-      text = text.replace(/```json\n?/g, '').replace(/```\n?/g, '').trim();
-      setPerspectives(JSON.parse(text));
+      const data = await generateSosHelp(block);
+      setPerspectives(data);
     } catch (e) {
-       console.error("SOS Error: ", e);
+      console.error("SOS Error: ", e);
     } finally {
-       setLoading(false);
+      setLoading(false);
     }
   };
 

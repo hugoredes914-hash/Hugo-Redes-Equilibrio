@@ -8,7 +8,7 @@ import HealthModule from './components/HealthModule';
 import SosModal from './components/SosModal';
 import { auth, loginWithGoogle, logout, db } from './lib/firebase';
 import { onAuthStateChanged, User } from 'firebase/auth';
-import { collection, query, where, onSnapshot } from 'firebase/firestore';
+import { collection, query, where, onSnapshot, orderBy, limit } from 'firebase/firestore';
 
 type View = 'dashboard' | 'emotional' | 'execution' | 'professional' | 'health';
 
@@ -18,6 +18,7 @@ export default function App() {
   const [loadingAuth, setLoadingAuth] = useState(true);
   const [hasCheckedIn, setHasCheckedIn] = useState<boolean>(true);
   const [showSos, setShowSos] = useState(false);
+  const [consecutiveDaysWarning, setConsecutiveDaysWarning] = useState<'yesterday' | 'multiple' | null>(null);
 
   useEffect(() => {
     const unsub = onAuthStateChanged(auth, (u) => {
@@ -29,19 +30,50 @@ export default function App() {
 
   useEffect(() => {
     if (!user) return;
-    const today = new Date().toISOString().split('T')[0];
-    const q = query(collection(db, 'users', user.uid, 'metrics'), where('date', '==', today));
+    const today = new Date();
+    // Normalizing today to start of day for accurate comparison
+    today.setHours(0, 0, 0, 0);
+    const todayStr = new Date(today.getTime() - (today.getTimezoneOffset() * 60000)).toISOString().split('T')[0];
+
+    const q = query(collection(db, 'users', user.uid, 'metrics'), orderBy('date', 'desc'), limit(3));
     
     let isFirstLoad = true;
     const unsub = onSnapshot(q, (snap) => {
        if (snap.empty) {
            setHasCheckedIn(false);
            setCurrentView('health'); // force redirect
+           setConsecutiveDaysWarning(null); // No history yet
        } else {
-           if (!isFirstLoad && snap.docChanges().some(change => change.type === 'added')) {
-               setCurrentView('execution'); // Redirect after morning check-in
+           const docs = snap.docs.map(d => d.data());
+           const mostRecentDoc = docs[0];
+           
+           if (mostRecentDoc.date !== todayStr) {
+               setHasCheckedIn(false);
+               setCurrentView('health');
+               
+               // Calculate days missed
+               if (isFirstLoad) {
+                   const lastDate = new Date(mostRecentDoc.date);
+                   lastDate.setHours(0,0,0,0);
+                   const lastDateStr = new Date(lastDate.getTime() - (lastDate.getTimezoneOffset() * 60000)).toISOString().split('T')[0];
+                   
+                   // calculate difference in days
+                   const diffTime = Math.abs(today.getTime() - lastDate.getTime());
+                   const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+                   
+                   if (diffDays === 1) {
+                       setConsecutiveDaysWarning('yesterday');
+                   } else if (diffDays > 1) {
+                       setConsecutiveDaysWarning('multiple');
+                   }
+               }
+           } else {
+               if (!isFirstLoad && snap.docChanges().some(change => change.type === 'added' && change.doc.data().date === todayStr)) {
+                   setCurrentView('execution');
+               }
+               setHasCheckedIn(true);
+               setConsecutiveDaysWarning(null);
            }
-           setHasCheckedIn(true);
        }
        isFirstLoad = false;
     });
@@ -159,6 +191,44 @@ export default function App() {
       </button>
       
       {showSos && <SosModal onClose={() => setShowSos(false)} />}
+      
+      {consecutiveDaysWarning && (
+        <div className="fixed inset-0 bg-[#3E4639]/80 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+          <div className="bg-white rounded-3xl p-8 max-w-md w-full shadow-2xl relative border border-[#D4A373]">
+            {consecutiveDaysWarning === 'yesterday' ? (
+              <>
+                <div className="w-12 h-12 rounded-full bg-[#FDFBF7] border border-[#D4A373] text-[#D4A373] flex items-center justify-center mb-6">
+                  <Activity className="w-6 h-6" />
+                </div>
+                <h2 className="text-2xl font-serif text-[#3E4639] mb-4">Alerta de Consistencia</h2>
+                <p className="text-[#7B8371] leading-relaxed mb-8">
+                  Ayer no registraste tu estado. El progreso depende de la constancia. Completa tu Check-in ahora y no rompas la cadena. Dos días seguidos es un hábito en declive.
+                </p>
+              </>
+            ) : (
+              <>
+                <div className="w-12 h-12 rounded-full bg-red-50 border border-red-500 text-red-500 flex items-center justify-center mb-6">
+                  <Brain className="w-6 h-6" />
+                </div>
+                <h2 className="text-2xl font-serif text-[#3E4639] mb-4">Protocolo de Restauración</h2>
+                <p className="text-[#3E4639] leading-relaxed mb-4">
+                  Has estado ausente por múltiples días. 
+                </p>
+                <p className="text-[#7B8371] leading-relaxed mb-8 italic">
+                  Lo importante no es la caída, sino la recuperación. Tómate el tiempo de registrar tu estado con honestidad para reiniciar tu impulso ahora mismo.
+                </p>
+              </>
+            )}
+            
+            <button 
+              onClick={() => setConsecutiveDaysWarning(null)}
+              className="w-full bg-[#3E4639] hover:bg-[#2C3328] text-white rounded-xl py-3 font-medium transition-colors"
+            >
+              Registrar Check-in Ahora
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

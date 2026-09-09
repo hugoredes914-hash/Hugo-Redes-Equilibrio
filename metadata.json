@@ -2,5 +2,7 @@
   "name": "Equilibrio - Autogestión",
   "description": "Sistema integrado de autogestión con TCC, PNL y herramientas de productividad para recuperación emocional y avance profesional.",
   "requestFramePermissions": [],
-  "majorCapabilities": []
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
 }

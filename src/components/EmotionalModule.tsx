@@ -29,6 +29,9 @@ export default function EmotionalModule() {
   const [viewHistory, setViewHistory] = useState(false);
   const [tccLogs, setTccLogs] = useState<any[]>([]);
 
+  const [viewGratitudeHistory, setViewGratitudeHistory] = useState(false);
+  const [gratitudeLogs, setGratitudeLogs] = useState<any[]>([]);
+
   useEffect(() => {
     if (!auth.currentUser) return;
     const q = query(collection(db, 'users', auth.currentUser.uid, 'reframings'), orderBy('createdAt', 'desc'));
@@ -36,7 +39,15 @@ export default function EmotionalModule() {
        setTccLogs(snapshot.docs.map(d => ({ id: d.id, ...d.data() })));
     }, (error) => handleFirestoreError(error, OperationType.LIST, 'reframings'));
     
-    return () => unsub();
+    const qGratitudes = query(collection(db, 'users', auth.currentUser.uid, 'gratitudes'), orderBy('createdAt', 'desc'));
+    const unsubGratitudes = onSnapshot(qGratitudes, (snapshot) => {
+       setGratitudeLogs(snapshot.docs.map(d => ({ id: d.id, ...d.data() })));
+    }, (error) => handleFirestoreError(error, OperationType.LIST, 'gratitudes'));
+    
+    return () => {
+      unsub();
+      unsubGratitudes();
+    };
   }, []);
 
   const handleSaveReframing = async () => {
@@ -89,7 +100,8 @@ export default function EmotionalModule() {
          setGratitude1('');
          setGratitude2('');
          setGratitude3('');
-      }, 3000);
+         setViewGratitudeHistory(true);
+      }, 2000);
     } catch (error) {
       handleFirestoreError(error, OperationType.CREATE, 'gratitudes');
     } finally {
@@ -255,58 +267,87 @@ export default function EmotionalModule() {
 
         {/* Diario de Gratitud */}
         <section className="bg-white rounded-3xl p-6 md:p-8 flex flex-col border border-[#E5E2D9] shadow-sm">
-          <div className="mb-6">
-            <h2 className="flex items-center text-xl font-serif text-[#3E4639] mb-1">
-              <Heart className="w-5 h-5 mr-2 opacity-80 text-[#D4A373]" />
-              Diario de Gratitud y Logros
-            </h2>
-            <p className="text-xs text-[#7B8371]">
-              Anota 3 cosas por las que agradeces o 3 pequeños logros de hoy.
-            </p>
-          </div>
-          
-          <div className="space-y-4 flex-1">
-             <div className="space-y-4">
-                <div className="flex items-center space-x-3 bg-[#F9F8F4] p-3 rounded-xl border border-[#F0EEE6]">
-                  <div className="w-8 h-8 rounded-full bg-[#A3B18A] text-white flex items-center justify-center font-serif flex-shrink-0">1</div>
-                  <Input 
-                    placeholder="Ej. Agradezco el apoyo de mis padres" 
-                    value={gratitude1} 
-                    onChange={(e) => setGratitude1(e.target.value)} 
-                    className="border-none bg-transparent shadow-none focus-visible:ring-0 px-0 placeholder:text-[#7B8371]/50 text-sm"
-                  />
-                </div>
-                <div className="flex items-center space-x-3 bg-[#F9F8F4] p-3 rounded-xl border border-[#F0EEE6]">
-                  <div className="w-8 h-8 rounded-full bg-[#D4A373] text-white flex items-center justify-center font-serif flex-shrink-0">2</div>
-                  <Input 
-                    placeholder="Ej. Logré levantarme y hacer mi cama" 
-                    value={gratitude2} 
-                    onChange={(e) => setGratitude2(e.target.value)} 
-                    className="border-none bg-transparent shadow-none focus-visible:ring-0 px-0 placeholder:text-[#7B8371]/50 text-sm"
-                  />
-                </div>
-                <div className="flex items-center space-x-3 bg-[#F9F8F4] p-3 rounded-xl border border-[#F0EEE6]">
-                  <div className="w-8 h-8 rounded-full border border-[#D4A373] text-[#D4A373] flex items-center justify-center font-serif flex-shrink-0">3</div>
-                  <Input 
-                    placeholder="Ej. Leí 10 páginas de un libro" 
-                    value={gratitude3} 
-                    onChange={(e) => setGratitude3(e.target.value)} 
-                    className="border-none bg-transparent shadow-none focus-visible:ring-0 px-0 placeholder:text-[#7B8371]/50 text-sm"
-                  />
-                </div>
-             </div>
-          </div>
-
-          <div className="mt-6">
-            <Button 
-                onClick={handleSaveGratitude}
-                variant="outline" 
-                className="w-full border-[#E5E2D9] text-[#7B8371] rounded-xl hover:bg-[#F9F8F4] font-medium py-3 h-auto transition-all" 
-                disabled={(!gratitude1 && !gratitude2 && !gratitude3) || isGratitudeLoading}
-            >
-               {isGratitudeLoading ? 'Registrando...' : gratitudeSuccess ? <><Check className="w-4 h-4 mr-2"/> Registrado</> : 'Registrar Gratitud'}
+          <div className="mb-6 flex justify-between items-start">
+            <div>
+              <h2 className="flex items-center text-xl font-serif text-[#3E4639] mb-1">
+                <Heart className="w-5 h-5 mr-2 opacity-80 text-[#D4A373]" />
+                Diario de Gratitud y Logros
+              </h2>
+              <p className="text-xs text-[#7B8371]">
+                Anota 3 cosas por las que agradeces o 3 pequeños logros de hoy.
+              </p>
+            </div>
+            <Button variant="outline" size="sm" onClick={() => setViewGratitudeHistory(!viewGratitudeHistory)} className="text-xs shrink-0 ml-2">
+              <BookOpen className="w-4 h-4 mr-2" />
+              {viewGratitudeHistory ? 'Nuevo Registro' : 'Ver Historial'}
             </Button>
           </div>
+          
+          {viewGratitudeHistory ? (
+             <div className="flex-1 overflow-y-auto max-h-[500px] space-y-4 pr-2">
+                {gratitudeLogs.length === 0 && <p className="text-sm text-[#7B8371] italic text-center py-8">No hay registros de gratitud.</p>}
+                {gratitudeLogs.map(log => (
+                    <div key={log.id} className="bg-[#FDFBF7] p-4 rounded-2xl border border-[#E5E2D9] space-y-3 relative group">
+                       <ul className="space-y-2">
+                          {log.items && log.items.map((item: string, idx: number) => (
+                              <li key={idx} className="flex gap-2 text-sm text-[#3E4639] items-start">
+                                  <span className="text-[#A3B18A] font-medium pt-1 leading-none">•</span> 
+                                  <span className="flex-1">{item}</span>
+                              </li>
+                          ))}
+                       </ul>
+                       <div className="text-[9px] text-[#7B8371] text-right pt-2 border-t border-[#E5E2D9]">
+                          {new Date(log.createdAt).toLocaleString('es-ES')}
+                       </div>
+                    </div>
+                ))}
+             </div>
+          ) : (
+             <>
+                <div className="space-y-4 flex-1">
+                   <div className="space-y-4">
+                      <div className="flex items-center space-x-3 bg-[#F9F8F4] p-3 rounded-xl border border-[#F0EEE6]">
+                        <div className="w-8 h-8 rounded-full bg-[#A3B18A] text-white flex items-center justify-center font-serif flex-shrink-0">1</div>
+                        <Input 
+                          placeholder="Ej. Agradezco el apoyo de mis padres" 
+                          value={gratitude1} 
+                          onChange={(e) => setGratitude1(e.target.value)} 
+                          className="border-none bg-transparent shadow-none focus-visible:ring-0 px-0 placeholder:text-[#7B8371]/50 text-sm flex-1"
+                        />
+                      </div>
+                      <div className="flex items-center space-x-3 bg-[#F9F8F4] p-3 rounded-xl border border-[#F0EEE6]">
+                        <div className="w-8 h-8 rounded-full bg-[#D4A373] text-white flex items-center justify-center font-serif flex-shrink-0">2</div>
+                        <Input 
+                          placeholder="Ej. Logré levantarme y hacer mi cama" 
+                          value={gratitude2} 
+                          onChange={(e) => setGratitude2(e.target.value)} 
+                          className="border-none bg-transparent shadow-none focus-visible:ring-0 px-0 placeholder:text-[#7B8371]/50 text-sm flex-1"
+                        />
+                      </div>
+                      <div className="flex items-center space-x-3 bg-[#F9F8F4] p-3 rounded-xl border border-[#F0EEE6]">
+                        <div className="w-8 h-8 rounded-full border border-[#D4A373] text-[#D4A373] flex items-center justify-center font-serif flex-shrink-0">3</div>
+                        <Input 
+                          placeholder="Ej. Leí 10 páginas de un libro" 
+                          value={gratitude3} 
+                          onChange={(e) => setGratitude3(e.target.value)} 
+                          className="border-none bg-transparent shadow-none focus-visible:ring-0 px-0 placeholder:text-[#7B8371]/50 text-sm flex-1"
+                        />
+                      </div>
+                   </div>
+                </div>
+
+                <div className="mt-6">
+                  <Button 
+                      onClick={handleSaveGratitude}
+                      variant="outline" 
+                      className="w-full border-[#E5E2D9] text-[#7B8371] hover:text-[#3E4639] rounded-xl hover:bg-[#F9F8F4] font-medium py-3 h-auto transition-all" 
+                      disabled={(!gratitude1 && !gratitude2 && !gratitude3) || isGratitudeLoading}
+                  >
+                     {isGratitudeLoading ? 'Registrando...' : gratitudeSuccess ? <><Check className="w-4 h-4 mr-2"/> Registrado</> : 'Registrar Gratitud'}
+                  </Button>
+                </div>
+             </>
+          )}
         </section>
       </div>
       

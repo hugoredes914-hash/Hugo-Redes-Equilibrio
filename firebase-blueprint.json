@@ -95,10 +95,17 @@
       "properties": {
         "userId": { "type": "string" },
         "name": { "type": "string" },
+        "phone": { "type": "string" },
         "property": { "type": "string" },
+        "propertyValue": { "type": "number" },
+        "interest": { "type": "string" },
         "notes": { "type": "string" },
         "nextActionDate": { "type": "number" },
         "stage": { "type": "string" },
+        "history": {
+          "type": "array",
+          "items": { "type": "object" }
+        },
         "createdAt": { "type": "number" }
       },
       "required": ["userId", "name", "stage", "createdAt"]

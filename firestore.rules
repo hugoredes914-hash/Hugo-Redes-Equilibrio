@@ -14,7 +14,7 @@ service cloud.firestore {
     function existing() { return resource.data; }
 
     function isValidId(id) { 
-      return id is string && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$'); 
+      return id is string && id.size() <= 128 && id.matches('^[a-zA-Z0-9_-]+$'); 
     }
 
     // Entities Validations
@@ -126,15 +126,28 @@ service cloud.firestore {
         && data.createdAt is number
         && (data.get('property', '') is string && data.get('property', '').size() <= 100)
         && (data.get('notes', '') is string && data.get('notes', '').size() <= 2000)
-        && (data.get('nextActionDate', 0) is number);
+        && (data.get('nextActionDate', 0) is number)
+        && (data.get('phone', '') is string && data.get('phone', '').size() <= 50)
+        && (data.get('interest', '') is string && data.get('interest', '').size() <= 50)
+        && (data.get('propertyValue', 0) is number)
+        && (data.get('history', []) is list && data.get('history', []).size() <= 1000)
+        && (data.get('type', '') is string && data.get('type', '').size() <= 20)
+        && (data.get('updatedAt', 0) is number);
     }
     
     function isValidLead_Update(incoming, existing) {
-       return incoming.diff(existing).affectedKeys().hasOnly(['stage', 'property', 'notes', 'nextActionDate', 'name'])
+       return incoming.diff(existing).affectedKeys().hasOnly(['stage', 'property', 'notes', 'nextActionDate', 'name', 'phone', 'interest', 'propertyValue', 'history', 'type', 'updatedAt'])
          && (incoming.get('stage', '') is string && incoming.get('stage', '').size() <= 20)
          && (incoming.get('property', '') is string && incoming.get('property', '').size() <= 100)
          && (incoming.get('notes', '') is string && incoming.get('notes', '').size() <= 2000)
-         && (incoming.get('nextActionDate', 0) is number);
+         && (incoming.get('nextActionDate', 0) is number)
+         && (incoming.get('name', '') is string && incoming.get('name', '').size() <= 100)
+         && (incoming.get('phone', '') is string && incoming.get('phone', '').size() <= 50)
+         && (incoming.get('interest', '') is string && incoming.get('interest', '').size() <= 50)
+         && (incoming.get('propertyValue', 0) is number)
+         && (incoming.get('history', []) is list && incoming.get('history', []).size() <= 1000)
+         && (incoming.get('type', '') is string && incoming.get('type', '').size() <= 20)
+         && (incoming.get('updatedAt', 0) is number);
     }
 
     // Match Collections
@@ -151,6 +164,7 @@ service cloud.firestore {
         allow create: if isOwner(userId) && isValidId(userId) && isValidId(metricId) && isValidDailyHealthMetric_Create(incoming());
         allow update: if isOwner(userId) && isValidId(userId) && isValidId(metricId) && isValidDailyHealthMetric_Update(incoming())
             && incoming().diff(existing()).affectedKeys().hasOnly(['checkinMood', 'checkinAnxiety', 'checkinEnergy', 'checkinSleep', 'checkoutMood', 'checkoutAnxiety', 'checkoutEnergy', 'checkoutCause', 'updatedAt']);
+        allow delete: if isOwner(userId) && isValidId(userId) && isValidId(metricId);
       }
 
       match /tasks/{taskId} {

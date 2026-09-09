@@ -170,8 +170,8 @@ export default function ExecutionModule() {
   return (
     <div className="space-y-6 animate-in fade-in duration-500 pb-12">
       <header className="mb-8">
-        <h2 className="text-3xl font-serif tracking-tight mb-2 text-[#3E4639]">Ejecución Diaria</h2>
-        <p className="text-[#7B8371] text-sm">Micro-hábitos y las 3 Actividades Importantes (MIT).</p>
+        <h2 className="text-3xl font-serif tracking-tight mb-2 text-[#3E4639]">Ejecución del Asesor</h2>
+        <p className="text-[#7B8371] text-sm">Foco Inmobiliario (MIT) y Votos de Identidad Activa.</p>
       </header>
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
@@ -301,7 +301,7 @@ export default function ExecutionModule() {
              <table className="w-full text-xs text-left">
                 <thead className="text-[10px] uppercase tracking-widest text-[#7B8371] border-b border-[#F0EEE6]">
                    <tr>
-                      <th className="px-4 py-3 font-normal">Hábito / Acción Automática</th>
+                      <th className="px-4 py-3 font-normal">Acción / Comportamiento</th>
                       <th className="px-4 py-3 font-normal">Evaluación</th>
                       <th className="px-4 py-3 font-normal">Nota / Efecto</th>
                       <th className="px-4 py-3 font-normal text-right"></th>
@@ -320,7 +320,7 @@ export default function ExecutionModule() {
                    ))}
                    {!isAddingLog ? (
                        <tr className="bg-[#F9F8F4]">
-                          <td colSpan={3} className="px-4 py-4 text-[#A3B18A] font-medium cursor-pointer hover:underline text-center" onClick={() => setIsAddingLog(true)}>+ Registrar Hábito Scorecard</td>
+                          <td colSpan={3} className="px-4 py-4 text-[#A3B18A] font-medium cursor-pointer hover:underline text-center" onClick={() => setIsAddingLog(true)}>+ Registrar Scorecard</td>
                        </tr>
                    ) : (
                        <tr className="bg-[#F9F8F4]">
@@ -353,9 +353,9 @@ export default function ExecutionModule() {
               <div>
                  <h3 className="text-lg font-serif text-[#3E4639] flex items-center mb-1">
                     <CheckCircle2 className="w-4 h-4 mr-2 text-[#A3B18A]" /> 
-                    Motor de Micro-hábitos
+                    Votos de Identidad
                  </h3>
-                 <p className="text-[10px] uppercase tracking-widest text-[#7B8371]">La consistencia &gt; la intensidad inicial. (Globales)</p>
+                 <p className="text-[10px] uppercase tracking-widest text-[#7B8371]">Cada acción es un voto por el tipo de asesor que eres.</p>
               </div>
               {totalHabits > 0 && (
                  <div className="text-xs text-[#7B8371] bg-[#F9F8F4] px-3 py-1.5 rounded-full border border-[#E5E2D9]">
@@ -383,18 +383,18 @@ export default function ExecutionModule() {
                     ))}
                     {!isAddingHabitExpanded && (
                        <Button variant="outline" size="sm" onClick={() => setIsAddingHabitExpanded(true)} className="border-dashed border-[#A3B18A] text-[#A3B18A] hover:bg-[#F9F8F4] text-xs h-8">
-                         + Añadir Hábito
+                         + Añadir Acción
                        </Button>
                     )}
                  </div>
                  
                  {isAddingHabitExpanded && (
                      <form onSubmit={addHabit} className="flex flex-col gap-2 bg-[#F9F8F4] p-4 rounded-xl border border-[#E5E2D9] w-full max-w-sm mt-2">
-                         <span className="text-[10px] font-bold uppercase tracking-widest text-[#7B8371] mb-1">Nuevo Hábito</span>
+                         <span className="text-[10px] font-bold uppercase tracking-widest text-[#7B8371] mb-1">Nueva Acción y Voto</span>
                          <Input 
                            value={newHabit}
                            onChange={(e) => setNewHabit(e.target.value)}
-                           placeholder="Nombre del hábito (Ej. Prospección fría)"
+                           placeholder="Nombre de la acción (Ej. Prospección fría)"
                            className="bg-white border-[#E5E2D9] text-xs focus-visible:ring-[#A3B18A]"
                          />
                          <Input 

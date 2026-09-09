@@ -1,9 +1,9 @@
 import React, { useState, useEffect } from 'react';
 import { Button } from '@/components/ui/button';
-import { Activity, BatteryCharging, Moon, Sun, TrendingUp, AlertCircle } from 'lucide-react';
+import { Activity, BatteryCharging, Moon, Sun, TrendingUp, AlertCircle, X, MessageCircle } from 'lucide-react';
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, AreaChart, Area } from 'recharts';
 import { auth, db, handleFirestoreError, OperationType } from '../lib/firebase';
-import { collection, query, onSnapshot, addDoc, updateDoc, doc, serverTimestamp, orderBy, limit } from 'firebase/firestore';
+import { collection, query, onSnapshot, addDoc, updateDoc, doc, serverTimestamp, orderBy, limit, setDoc, deleteDoc } from 'firebase/firestore';
 
 export default function HealthModule() {
   const [isDayStarted, setIsDayStarted] = useState(false);
@@ -12,15 +12,17 @@ export default function HealthModule() {
   const [checkIn, setCheckIn] = useState({ mood: 5, anxiety: 5, energy: 5, sleep: 6 });
   const [checkOut, setCheckOut] = useState({ mood: 5, anxiety: 5, energy: 5, cause: '' });
   const [currentMetricId, setCurrentMetricId] = useState<string | null>(null);
+  const [isHistoryModalOpen, setIsHistoryModalOpen] = useState(false);
 
   const [history, setHistory] = useState<any[]>([]);
 
   useEffect(() => {
      if (!auth.currentUser) return;
      const userId = auth.currentUser.uid;
-     // Fetch last 7 metrics for history
-     const qMetrics = query(collection(db, 'users', userId, 'metrics'), orderBy('date', 'asc'), limit(14));
+     // Fetch last 14 metrics for history
+     const qMetrics = query(collection(db, 'users', userId, 'metrics'), orderBy('date', 'desc'), limit(14));
      const unsub = onSnapshot(qMetrics, (snapshot) => {
+         // Reverse to maintain chronological order in charts / displays
          const metrics = snapshot.docs.map(doc => {
              const d = doc.data();
              const dateStr = d.date.split('-');
@@ -37,12 +39,17 @@ export default function HealthModule() {
                  checkout: Math.round(checkoutScore * 10),
                  raw: d
              };
-         });
-         setHistory(metrics);
+         }).reverse();
+         
+         const uniqueHistoryMap = new Map();
+         metrics.forEach(m => uniqueHistoryMap.set(m.date, m));
+         const uniqueHistory = Array.from(uniqueHistoryMap.values());
+         
+         setHistory(uniqueHistory);
          
          // Check if today is already started/ended
          const today = new Date().toISOString().split('T')[0];
-         const todayMetric = metrics.find(m => m.date === today);
+         const todayMetric = uniqueHistory.find(m => m.date === today);
          
          if (todayMetric) {
             setCurrentMetricId(todayMetric.id);
@@ -75,25 +82,37 @@ export default function HealthModule() {
   const handleStartDay = async () => {
     if (!auth.currentUser) return;
     const today = new Date().toISOString().split('T')[0];
+    const todayMetric = history.find(m => m.date === today);
     try {
-        const docRef = await addDoc(collection(db, 'users', auth.currentUser.uid, 'metrics'), {
-            userId: auth.currentUser.uid,
-            date: today,
-            checkinMood: checkIn.mood,
-            checkinAnxiety: checkIn.anxiety,
-            checkinEnergy: checkIn.energy,
-            checkinSleep: checkIn.sleep,
-            checkoutMood: 0,
-            checkoutAnxiety: 0,
-            checkoutEnergy: 0,
-            checkoutCause: '',
-            createdAt: Date.now(),
-            updatedAt: Date.now()
-        });
-        setCurrentMetricId(docRef.id);
+        const docRef = doc(db, 'users', auth.currentUser.uid, 'metrics', today);
+        if (todayMetric) {
+            await updateDoc(docRef, {
+                checkinMood: checkIn.mood,
+                checkinAnxiety: checkIn.anxiety,
+                checkinEnergy: checkIn.energy,
+                checkinSleep: checkIn.sleep,
+                updatedAt: Date.now()
+            });
+        } else {
+            await setDoc(docRef, {
+                userId: auth.currentUser.uid,
+                date: today,
+                checkinMood: checkIn.mood,
+                checkinAnxiety: checkIn.anxiety,
+                checkinEnergy: checkIn.energy,
+                checkinSleep: checkIn.sleep,
+                checkoutMood: 0,
+                checkoutAnxiety: 0,
+                checkoutEnergy: 0,
+                checkoutCause: '',
+                createdAt: Date.now(),
+                updatedAt: Date.now()
+            });
+        }
+        setCurrentMetricId(today);
         setIsDayStarted(true);
     } catch (error) {
-        handleFirestoreError(error, OperationType.CREATE, 'metrics');
+        handleFirestoreError(error, todayMetric ? OperationType.UPDATE : OperationType.CREATE, 'metrics');
     }
   };
 
@@ -185,9 +204,9 @@ export default function HealthModule() {
                       <span className="text-xl font-serif text-[#A3B18A]">{item.val}</span>
                     </div>
                     <input 
-                      type="range" min="1" max="10" 
-                      value={item.val}
-                      onChange={(e) => setCheckIn({...checkIn, [item.stateKey]: parseInt(e.target.value)})}
+                      type="range" min="1" max="10" step="1"
+                      value={item.val || 5}
+                      onChange={(e) => setCheckIn(prev => ({...prev, [item.stateKey]: parseInt(e.target.value, 10)}))}
                       className="w-full h-2 bg-[#E5E2D9] rounded-lg appearance-none cursor-pointer accent-[#3E4639]"
                     />
                     <p className="text-[10px] text-[#7B8371]">{item.desc}</p>
@@ -218,7 +237,7 @@ export default function HealthModule() {
                 </p>
               </div>
               
-              {new Date().getHours() >= 20 || new Date().getHours() < 4 ? (
+              {new Date().getHours() >= 18 || new Date().getHours() < 4 ? (
                 <>
                   <div className="space-y-6 relative z-10">
                 {[
@@ -232,9 +251,9 @@ export default function HealthModule() {
                       <span className="text-lg font-mono text-white/90">{item.val} {item.emoji}</span>
                     </div>
                     <input 
-                      type="range" min="1" max="10" 
-                      value={item.val}
-                      onChange={(e) => setCheckOut({...checkOut, [item.stateKey]: parseInt(e.target.value)})}
+                      type="range" min="1" max="10" step="1"
+                      value={item.val || 5}
+                      onChange={(e) => setCheckOut(prev => ({...prev, [item.stateKey]: parseInt(e.target.value, 10)}))}
                       className="w-full h-1.5 bg-white/20 rounded-lg appearance-none cursor-pointer accent-[#D4A373]"
                     />
                   </div>
@@ -269,7 +288,7 @@ export default function HealthModule() {
                    <div>
                      <h3 className="text-lg text-white font-serif mb-1">Cierre en espera</h3>
                      <p className="text-sm text-white/70 max-w-[250px] mx-auto">
-                       El check-out nocturno se habilitará automáticamente a partir de las 20:00 hs.
+                       El check-out nocturno se habilitará automáticamente a partir de las 18:00 hs.
                      </p>
                    </div>
                 </div>
@@ -284,14 +303,20 @@ export default function HealthModule() {
                <p className="text-sm text-[#7B8371] mb-6 max-w-sm">
                  Tu estado ha sido guardado. Evalúa tu gráfica de evolución para que mañana ajustes tus estrategias operativas.
                </p>
-               <Button variant="outline" className="text-[#3E4639] border-[#E5E2D9] rounded-xl font-medium" onClick={() => {
+               <Button variant="outline" className="text-[#3E4639] border-[#E5E2D9] rounded-xl font-medium" onClick={async () => {
+                 try {
+                     if (auth.currentUser && currentMetricId) {
+                         await deleteDoc(doc(db, 'users', auth.currentUser.uid, 'metrics', currentMetricId));
+                     }
+                 } catch(err) {
+                     console.error(err);
+                 }
                  setIsDayStarted(false);
                  setIsDayEnded(false);
                  setCheckOut({ mood: 5, anxiety: 5, energy: 5, cause: '' });
-                 // Pop the last "Hoy" to restart loop for demo purposes
-                 setHistory(history.slice(0, -1));
+                 setCurrentMetricId(null);
                }}>
-                 Reiniciar Demo (Nuevo Día)
+                 Reiniciar Registro (Limpiar Hoy)
                </Button>
             </section>
           )}
@@ -315,14 +340,19 @@ export default function HealthModule() {
 
           {/* Evolution Chart */}
           <section className="bg-[#FDFBF7] border border-[#E5E2D9] rounded-3xl p-6 md:p-8 shadow-sm flex-1 flex flex-col">
-            <div className="mb-6">
-              <h2 className="flex items-center text-xl font-serif text-[#3E4639] mb-1">
-                <TrendingUp className="w-5 h-5 mr-2 opacity-80" />
-                Evolución de Rendimiento
-              </h2>
-              <p className="text-[10px] uppercase tracking-widest text-[#7B8371]">
-                Índice de bienestar: Mañana vs Noche
-              </p>
+            <div className="mb-6 flex justify-between items-start">
+              <div>
+                <h2 className="flex items-center text-xl font-serif text-[#3E4639] mb-1">
+                  <TrendingUp className="w-5 h-5 mr-2 opacity-80" />
+                  Evolución de Rendimiento
+                </h2>
+                <p className="text-[10px] uppercase tracking-widest text-[#7B8371]">
+                  Índice de bienestar: Mañana vs Noche
+                </p>
+              </div>
+              <Button variant="outline" size="sm" onClick={() => setIsHistoryModalOpen(true)} className="text-[#3E4639] border-[#E5E2D9] text-xs">
+                <MessageCircle className="w-4 h-4 mr-1 md:mr-2" /> <span className="hidden md:inline">Historial de Cierres</span>
+              </Button>
             </div>
             
             <div className="flex-1 w-full min-h-[250px]">
@@ -365,6 +395,44 @@ export default function HealthModule() {
           </section>
         </div>
       </div>
+
+      {/* History Modal */}
+      {isHistoryModalOpen && (
+         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40 backdrop-blur-sm">
+            <div className="bg-white rounded-3xl p-6 md:p-8 w-full max-w-lg shadow-2xl relative max-h-[90vh] flex flex-col">
+               <Button variant="ghost" size="icon" onClick={() => setIsHistoryModalOpen(false)} className="absolute top-4 right-4 text-[#7B8371] hover:bg-gray-100">
+                  <X className="w-5 h-5"/>
+               </Button>
+               <h3 className="font-serif text-xl text-[#3E4639] mb-6 flex items-center">
+                  <MessageCircle className="w-5 h-5 mr-2 opacity-80" />
+                  Historial de Cierres Diarios
+               </h3>
+               
+               <div className="overflow-y-auto pr-2 space-y-4 flex-1">
+                  {history.filter(h => h.raw.checkoutCause && h.raw.checkoutCause.trim() !== '').length === 0 ? (
+                     <p className="text-sm text-[#7B8371] text-center py-8">Aún no hay comentarios guardados.</p>
+                  ) : (
+                     history.filter(h => h.raw.checkoutCause && h.raw.checkoutCause.trim() !== '').reverse().map((h, idx) => (
+                        <div key={idx} className="p-4 bg-[#F9F8F4] border border-[#E5E2D9] rounded-2xl relative">
+                           <div className="flex justify-between items-start mb-2">
+                              <span className="text-xs font-bold text-[#A3B18A] tracking-wider">{h.day}</span>
+                              <div className="flex gap-2">
+                                 <span className="text-[10px] bg-white px-2 py-0.5 rounded-full border border-[#E5E2D9] text-[#7B8371]" title="Ánimo">
+                                    🙂 {h.raw.checkoutMood}
+                                 </span>
+                                 <span className="text-[10px] bg-white px-2 py-0.5 rounded-full border border-[#E5E2D9] text-[#7B8371]" title="Energía">
+                                    ⚡ {h.raw.checkoutEnergy}
+                                 </span>
+                              </div>
+                           </div>
+                           <p className="text-sm text-[#3E4639] italic">"{h.raw.checkoutCause}"</p>
+                        </div>
+                     ))
+                  )}
+               </div>
+            </div>
+         </div>
+      )}
     </div>
   );
 }

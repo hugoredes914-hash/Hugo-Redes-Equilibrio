@@ -20,6 +20,7 @@ export default function Dashboard({ onNavigate }: { onNavigate: (view: any) => v
   const currentDate = new Date().toLocaleDateString('es-ES', { month: 'long', day: 'numeric', year: 'numeric' });
   const [tasks, setTasks] = useState<any[]>([]);
   const [metrics, setMetrics] = useState<any[]>([]);
+  const [leads, setLeads] = useState<any[]>([]);
   const [chartData, setChartData] = useState(defaultChartData);
   
   const [anchor, setAnchor] = useState({
@@ -40,29 +41,57 @@ export default function Dashboard({ onNavigate }: { onNavigate: (view: any) => v
      }, (err) => handleFirestoreError(err, OperationType.LIST, 'tasks'));
 
      // Fetch metrics
-     const qMetrics = query(collection(db, 'users', userId, 'metrics'), orderBy('date', 'asc'), limit(7));
+     const qMetrics = query(collection(db, 'users', userId, 'metrics'), orderBy('date', 'desc'), limit(7));
      const unsubMetrics = onSnapshot(qMetrics, (snapshot) => {
-        const metricsData = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-        setMetrics(metricsData);
+        // Reverse to get ascending chronological order for charts
+        const metricsData = snapshot.docs.map(doc => ({ id: doc.id, ...(doc.data() as any) })).reverse();
         
-        if (metricsData.length > 0) {
-            const newChartData = metricsData.map((d: any) => {
-                const dateStr = d.date.split('-');
-                const label = dateStr.length === 3 ? `${dateStr[2]}/${dateStr[1]}` : d.date;
-                const resiliencia = (d.checkinMood + d.checkinEnergy + (10 - d.checkinAnxiety)) * 3.33; // out of ~100
-                const ejecucion = d.checkoutMood > 0 ? (d.checkoutEnergy + (10 - d.checkoutAnxiety)) * 5 : 0; // approximate execution rate
-                return { name: label, resiliencia: Math.round(resiliencia), ejecucion: Math.round(ejecucion) };
-            });
-            setChartData(newChartData);
-        }
+        const uniqueMetricsMap = new Map();
+        metricsData.forEach(m => uniqueMetricsMap.set(m.date, m));
+        const uniqueMetrics = Array.from(uniqueMetricsMap.values());
+        
+        setMetrics(uniqueMetrics);
      }, (error) => handleFirestoreError(error, OperationType.LIST, 'metrics'));
+
+     // Fetch leads for CRM summary
+     const qLeads = query(collection(db, 'users', userId, 'leads'), orderBy('createdAt', 'desc'));
+     const unsubLeads = onSnapshot(qLeads, (snapshot) => {
+        setLeads(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })));
+     }, (error) => handleFirestoreError(error, OperationType.LIST, 'leads'));
 
      return () => {
          unsubTasks();
          unsubMetrics();
+         unsubLeads();
      }
   }, []);
   
+  useEffect(() => {
+     if (metrics.length > 0) {
+         const newChartData = metrics.map((d: any) => {
+             const dateStr = d.date.split('-');
+             const label = dateStr.length === 3 ? `${dateStr[2]}/${dateStr[1]}` : d.date;
+             
+             // Resiliencia (Estado del Check-in Matutino)
+             const resiliencia = ((d.checkinMood + d.checkinEnergy + (10 - d.checkinAnxiety)) / 3) * 10;
+             
+             // Ejecución = % de Actividades (MIT) completadas + Ponderación del Check-out si no hay tareas
+             const dayMits = tasks.filter(t => t.type === 'mit' && t.date === d.date);
+             let ejecucion = 0;
+             
+             if (dayMits.length > 0) {
+                 const doneMits = dayMits.filter(t => t.done).length;
+                 ejecucion = (doneMits / dayMits.length) * 100;
+             } else if (d.checkoutMood > 0) {
+                 ejecucion = ((d.checkoutEnergy + (10 - d.checkoutAnxiety)) / 2) * 10;
+             }
+             
+             return { name: label, resiliencia: Math.round(resiliencia), ejecucion: Math.round(ejecucion) };
+         });
+         setChartData(newChartData);
+     }
+  }, [metrics, tasks]);
+
   const fetchedRef = React.useRef(false);
 
   useEffect(() => {
@@ -100,22 +129,42 @@ export default function Dashboard({ onNavigate }: { onNavigate: (view: any) => v
   const habitsProgress = globalHabits.length > 0 ? Math.round((doneHabits / globalHabits.length) * 100) : 0;
   
   const todayMetric = metrics.find(m => m.date === today);
-  const energyLevel = todayMetric ? Math.round((todayMetric.checkinEnergy / 10) * 100) : 0;
-  const energyLabel = energyLevel > 70 ? 'Óptimo' : energyLevel > 40 ? 'Adecuado' : 'Agotado';
+  const energyScore = todayMetric ? (todayMetric.checkinMood + todayMetric.checkinEnergy + (10 - todayMetric.checkinAnxiety) + (todayMetric.checkinSleep || Number(todayMetric.checkinEnergy))) / 4 : 0;
+  const energyLevel = todayMetric ? Math.round((energyScore / 10) * 100) : 0;
+  const energyLabel = !todayMetric ? 'No registrado' : energyLevel > 70 ? 'Óptimo' : energyLevel > 40 ? 'Adecuado' : 'Agotado';
+
+  // CRM Summary calcs
+  const captaciones = leads.filter(l => l.type === 'captacion');
+  const ventas = leads.filter(l => l.type !== 'captacion');
+
+  const activeCaptaciones = captaciones.filter(l => l.stage !== 'Perdido' && l.stage !== 'Cierre (Captada)');
+  const totalCaptacionesCerradas = captaciones.filter(l => l.stage === 'Cierre (Captada)').length;
+
+  const activeVentas = ventas.filter(l => l.stage !== 'Perdido' && l.stage !== 'Cierre');
+  const totalPipelineVentas = activeVentas.reduce((acc, lead) => acc + (Number(lead.propertyValue) || 0), 0);
+  const totalVentasCerradas = ventas.filter(l => l.stage === 'Cierre').length;
+
+  const pendingActions = leads.filter(l => {
+    if (l.stage === 'Perdido' || l.stage === 'Cierre' || l.stage === 'Cierre (Captada)') return false;
+    if (!l.nextActionDate) return false;
+    const actionDate = new Date(l.nextActionDate).toISOString().split('T')[0];
+    return actionDate <= today;
+  });
 
   return (
     <div className="space-y-8 animate-in fade-in slide-in-from-bottom-4 duration-500 pb-12">
       <header className="flex flex-col md:flex-row md:justify-between md:items-end gap-4 mb-2">
-        <div className="space-y-1">
-          <h1 className="text-4xl font-serif italic text-[#3E4639]">Hola, Hugo</h1>
-          <p className="text-[#7B8371] text-sm italic">"La calma es la fundación de la acción de alto impacto."</p>
+        <div className="space-y-2">
+          <div className="text-[10px] uppercase tracking-widest text-[#A3B18A] font-bold">Identidad Principal</div>
+          <h1 className="text-4xl font-serif italic text-[#3E4639]">Asesor Inmobiliario Profesional</h1>
+          <p className="text-[#7B8371] text-sm italic">"La constancia diaria es la que construye al verdadero profesional inmobiliario."</p>
         </div>
         <div className="hidden md:flex items-center gap-4">
           <div className="text-right">
             <div className="text-xs uppercase tracking-widest opacity-50 mb-1">Fecha de hoy</div>
             <div className="text-lg font-medium text-[#3E4639]">{currentDate}</div>
           </div>
-          <div className="w-12 h-12 bg-[#A3B18A] rounded-full flex items-center justify-center text-white text-xl">
+          <div className="w-12 h-12 bg-[#A3B18A] rounded-full flex items-center justify-center text-white text-xl shadow-inner">
             H
           </div>
         </div>
@@ -127,7 +176,7 @@ export default function Dashboard({ onNavigate }: { onNavigate: (view: any) => v
           <div className="flex justify-between items-start mb-6">
             <div className="space-y-1">
               <h2 className="text-lg font-serif text-[#3E4639]">Estabilidad Emocional</h2>
-              <p className="text-xs text-[#7B8371]">Hábitos completados ({doneHabits}/{globalHabits.length})</p>
+              <p className="text-xs text-[#7B8371]">Votos de identidad ({doneHabits}/{globalHabits.length})</p>
             </div>
             <div className="bg-[#F9F8F4] p-2 rounded-xl border border-[#E5E2D9]">
               <Brain className="text-[#A3B18A] w-5 h-5" />
@@ -136,7 +185,7 @@ export default function Dashboard({ onNavigate }: { onNavigate: (view: any) => v
           <div>
             <Progress value={habitsProgress} className="h-2 mb-4 [&>div]:bg-[#A3B18A] bg-[#F9F8F4]" />
             <div className="flex items-center text-sm font-medium text-[#A3B18A]">
-              Ir al diario de gratitud <ChevronRight className="w-4 h-4 ml-1" />
+              Ir a calibración mental <ChevronRight className="w-4 h-4 ml-1" />
             </div>
           </div>
         </section>
@@ -145,8 +194,8 @@ export default function Dashboard({ onNavigate }: { onNavigate: (view: any) => v
         <section className="bg-[#3E4639] rounded-3xl p-6 text-white shadow-xl flex flex-col justify-between cursor-pointer hover:scale-[1.01] transition" onClick={() => onNavigate('execution')}>
           <div className="flex justify-between items-start mb-6">
             <div className="space-y-1">
-              <div className="text-xs uppercase tracking-widest opacity-60 mb-1">MIT (Prioridades)</div>
-              <h2 className="text-xl font-serif">Ejecución Diaria</h2>
+              <div className="text-xs uppercase tracking-widest opacity-60 mb-1">MIT (Prioridades de hoy)</div>
+              <h2 className="text-xl font-serif">Ejecución del Asesor</h2>
             </div>
             <div className="bg-white/10 p-2 rounded-xl border border-white/5">
               <Activity className="text-white opacity-80 w-5 h-5" />
@@ -179,26 +228,82 @@ export default function Dashboard({ onNavigate }: { onNavigate: (view: any) => v
         </section>
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mt-2">
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 mt-2">
         {/* MIT Activities */}
-        <section className="bg-white rounded-3xl p-6 border border-[#E5E2D9] shadow-sm">
+        <section className="bg-white rounded-3xl p-6 border border-[#E5E2D9] shadow-sm flex flex-col justify-between">
           <div className="mb-6">
             <h2 className="text-lg font-serif text-[#3E4639] mb-1">Actividades Estratégicas (MIT)</h2>
             <p className="text-xs text-[#7B8371]">Cumplir estas 3 hace que el día valga la pena.</p>
           </div>
           <div className="space-y-4">
-             {todayMits.length === 0 && <p className="text-sm text-[#7B8371] italic text-center py-4">No has registrado MIT para hoy.</p>}
+             {todayMits.length === 0 && <p className="text-sm text-[#7B8371] italic text-left py-4">No has registrado prioridades para hoy.</p>}
              {todayMits.map((mit) => (
                  <div key={mit.id} className={`flex items-center gap-3 p-3 rounded-xl border ${mit.done ? 'bg-[#F9F8F4] border-[#F0EEE6]' : 'bg-white border-[#D4A373]/30 shadow-sm'}`}>
-                    <div className={`w-5 h-5 rounded flex items-center justify-center border ${mit.done ? 'bg-[#A3B18A] border-[#A3B18A]' : 'border-[#D4A373]'}`}>
+                    <div className={`w-5 h-5 rounded flex items-center justify-center border shrink-0 ${mit.done ? 'bg-[#A3B18A] border-[#A3B18A]' : 'border-[#D4A373]'}`}>
                        {mit.done && <div className="w-2 h-2 bg-white rounded-[1px]"></div>}
                     </div>
-                    <div className="flex-1">
-                       <p className={`text-sm font-medium ${mit.done ? 'text-[#4A4F41] line-through opacity-70' : 'text-[#3E4639]'}`}>{mit.text}</p>
+                    <div className="flex-1 min-w-0">
+                       <p className={`text-sm font-medium truncate ${mit.done ? 'text-[#4A4F41] line-through opacity-70' : 'text-[#3E4639]'}`}>{mit.text}</p>
                        <p className={`text-[10px] uppercase tracking-widest font-bold mt-0.5 ${mit.done ? 'text-[#7B8371]' : 'text-[#D4A373]'}`}>{mit.done ? 'Completado' : 'Planificado'}</p>
                     </div>
                  </div>
              ))}
+          </div>
+        </section>
+
+        {/* CRM Overview */}
+        <section className="bg-white rounded-3xl p-6 border border-[#E5E2D9] shadow-sm flex flex-col gap-6 text-[#3E4639] cursor-pointer hover:shadow-md transition" onClick={() => onNavigate('professional')}>
+          <div className="flex justify-between items-start">
+             <div>
+                <h2 className="text-lg font-serif mb-1">Tu Negocio</h2>
+                <p className="text-xs text-[#7B8371]">Gestión Comercial y Captaciones.</p>
+             </div>
+             <div className="p-2 border border-[#E5E2D9] rounded-xl bg-[#F9F8F4]">
+                <Activity className="w-5 h-5 text-[#A3B18A]" />
+             </div>
+          </div>
+          
+          <div className="space-y-4">
+            <div className="grid grid-cols-2 gap-4 border-b border-[#E5E2D9] pb-4">
+               <div>
+                  <div className="text-[10px] uppercase tracking-widest text-[#7B8371] mb-1">Ventas Activas</div>
+                  <div className="text-2xl font-serif">{activeVentas.length} <span className="text-xs font-sans text-[#7B8371]">leads</span></div>
+                  <div className="text-[10px] text-[#A3B18A] mt-1">{totalVentasCerradas} cierres org.</div>
+               </div>
+               <div>
+                  <div className="text-[10px] uppercase tracking-widest text-[#7B8371] mb-1">Captaciones Act.</div>
+                  <div className="text-2xl font-serif">{activeCaptaciones.length} <span className="text-xs font-sans text-[#7B8371]">leads</span></div>
+                  <div className="text-[10px] text-[#A3B18A] mt-1">{totalCaptacionesCerradas} captadas org.</div>
+               </div>
+            </div>
+            
+            <div className="flex justify-between items-end pb-2">
+               <div>
+                 <div className="text-[10px] uppercase tracking-widest text-[#7B8371] mb-1">Valor Potencial Estimado (Ventas)</div>
+                 <div className="text-2xl font-medium">${totalPipelineVentas.toLocaleString()}</div>
+               </div>
+            </div>
+
+            {pendingActions.length > 0 && (
+              <div className="pt-3 border-t border-[#E5E2D9]">
+                <div className="text-[10px] items-center font-bold uppercase tracking-widest text-red-600 mb-2 flex gap-1">
+                  Acciones Requeridas Hoy <span className="bg-red-100 text-red-700 px-1.5 rounded-full text-[8px]">{pendingActions.length}</span>
+                </div>
+                <div className="space-y-2">
+                  {pendingActions.slice(0, 3).map(lead => (
+                    <div key={lead.id} className="text-xs flex justify-between bg-red-50 p-2 rounded-lg border border-red-100">
+                      <span className="font-medium text-red-800 truncate" title={lead.name}>{lead.name}</span>
+                      <span className="text-red-600 shrink-0 text-[10px] capitalize truncate max-w-[80px] text-right">{lead.type === 'captacion' ? 'Capt:' : 'Venta:'} {lead.stage}</span>
+                    </div>
+                  ))}
+                  {pendingActions.length > 3 && (
+                    <div className="text-center text-[10px] text-[#7B8371] mt-1">
+                      +{pendingActions.length - 3} más pendientes
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
           </div>
         </section>
 
@@ -237,10 +342,20 @@ export default function Dashboard({ onNavigate }: { onNavigate: (view: any) => v
       </div>
       
       {/* Chart Section */}
-      <section className="bg-white rounded-3xl p-6 md:p-8 border border-[#E5E2D9] shadow-sm">
+      <section className="bg-white rounded-3xl p-6 md:p-8 border border-[#E5E2D9] shadow-sm relative group">
         <div className="mb-6">
           <h2 className="text-xl font-serif text-[#3E4639] mb-1">Evolución: Resiliencia vs. Ejecución</h2>
-          <p className="text-sm text-[#7B8371]">A medida que mejora tu resiliencia, tu capacidad de ejecución escala.</p>
+          <p className="text-sm text-[#7B8371] mb-2">
+            Compara tu estado de ánimo matutino con tu tasa de productividad real.
+          </p>
+          <div className="flex flex-wrap gap-4 text-[10px] uppercase tracking-widest text-[#7B8371]">
+             <div className="bg-[#F9F8F4] px-3 py-1.5 rounded-lg border border-[#E5E2D9]">
+               <strong>Resiliencia:</strong> Promedio de tu Check-in matutino (Ánimo + Energía - Ansiedad).
+             </div>
+             <div className="bg-[#F9F8F4] px-3 py-1.5 rounded-lg border border-[#E5E2D9]">
+               <strong>Tasa de Ejecución:</strong> Porcentaje de tareas MIT completadas (o nivel de Check-out).
+             </div>
+          </div>
         </div>
         <div className="h-[250px] w-full">
           <ResponsiveContainer width="100%" height="100%">
